@@ -1,0 +1,24 @@
+syntax = "proto3";
+
+package rpc;
+
+
+message CreateSessionRequest {
+}
+
+message CreateSessionResponse {
+    string session_id = 1;
+}
+
+message DeleteSessionRequest {
+    string session_id = 1;
+}
+
+message DeleteSessionResponse {
+    bool success = 1;
+}
+  
+service chubby {
+    rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
+    rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
+}

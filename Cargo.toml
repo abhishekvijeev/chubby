@@ -1,6 +1,7 @@
 [workspace]
 
 members = [
-    "chubby",
-    "raft",
+    "chubby_client",
+    "chubby_server",
+    "cmd",
 ]
