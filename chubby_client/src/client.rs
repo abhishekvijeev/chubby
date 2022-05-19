@@ -15,6 +15,7 @@ struct ChubbyClientSession {
 
 impl ChubbyClient {
     pub async fn new() -> Result<ChubbyClient, tonic::transport::Error> {
+        println!("ChubbyClient::new()");
         // TODO: Keep retrying till connection succeeds
         let conn = rpc::chubby_client::ChubbyClient::connect("http://127.0.0.1:50051").await?;
         return Ok(Self {
@@ -24,6 +25,7 @@ impl ChubbyClient {
     }
 
     pub async fn create_session(&mut self) -> Result<(), Box<(dyn Error + Send + Sync)>>{
+        println!("ChubbyClient::create_session()");
         // TODO: Check if connection is valid, else re-establish
         if let Some(session) = &self.session {
             return Err(Box::new(ChubbyClientError::SessionInProgress(session.session_id.clone())));
@@ -31,6 +33,7 @@ impl ChubbyClient {
         
         let resp = self.conn.create_session(rpc::CreateSessionRequest{}).await?;
         let session_id = resp.into_inner().session_id;
+        println!("\treceived session id: {}", session_id);
         self.session = Some(ChubbyClientSession {
             session_id: session_id,
         });
@@ -38,6 +41,7 @@ impl ChubbyClient {
     }
 
     pub async fn delete_session(&mut self) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        println!("ChubbyClient::delete_session()");
         // TODO: Check if connection is valid, else re-establish
         if let Some(session) = &self.session {
             let resp = self.conn.delete_session(rpc::DeleteSessionRequest{session_id: session.session_id.clone()}).await?;
