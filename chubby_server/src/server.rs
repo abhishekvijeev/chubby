@@ -1,12 +1,23 @@
+mod constants;
 mod rpc;
 use atomic_counter::AtomicCounter;
 use atomic_counter::ConsistentCounter;
 use rpc::chubby_server::Chubby;
+use std::collections::HashMap;
+use std::sync::{Arc, RwLock};
+use std::time::{Duration, Instant};
 use tonic::{transport::Server, Request, Response, Status};
+
+pub struct ChubbySession {
+    session_id: usize,
+    start_time: Instant,
+    lease_length: Duration,
+}
 
 pub struct ChubbyServer {
     pub addr: std::net::SocketAddr,
     pub session_counter: ConsistentCounter,
+    pub sessions: Arc<RwLock<HashMap<usize, ChubbySession>>>,
 }
 
 #[tonic::async_trait]
@@ -17,9 +28,15 @@ impl Chubby for ChubbyServer {
     ) -> Result<tonic::Response<rpc::CreateSessionResponse>, tonic::Status> {
         println!("Received create_session request");
         self.session_counter.inc();
-        println!("\tcounter = {}", self.session_counter.get());
+        let session_id = self.session_counter.get();
+        let session = ChubbySession {
+            session_id: session_id,
+            start_time: Instant::now(),
+            lease_length: constants::LEASE_EXTENSION,
+        };
+        self.sessions.write().unwrap().insert(session_id, session);
         Ok(Response::new(rpc::CreateSessionResponse {
-            session_id: self.session_counter.get().to_string(),
+            session_id: session_id.to_string(),
         }))
     }
 
@@ -38,6 +55,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let server = ChubbyServer {
         addr: addr,
         session_counter: ConsistentCounter::new(0),
+        sessions: Arc::new(RwLock::new(HashMap::new())),
     };
     println!("Server listening on {}", addr);
     Server::builder()
