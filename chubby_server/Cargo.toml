@@ -8,6 +8,7 @@ edition = "2021"
 [dependencies]
 atomic-counter = "1.0.1"
 prost = "0.9"
+prost-types = "0.9"
 tokio = { version = "1", features = ["full"] }
 tonic = "0.6"
 

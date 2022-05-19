@@ -1,6 +1,7 @@
 use crate::err::ChubbyClientError;
 use chubby_server::rpc;
 use std::error::Error;
+use std::time::Duration;
 use tonic::transport::channel::Channel;
 
 pub struct ChubbyClient {
@@ -10,7 +11,7 @@ pub struct ChubbyClient {
 
 struct ChubbyClientSession {
     session_id: String,
-
+    lease_length: Duration,
 }
 
 impl ChubbyClient {
@@ -32,10 +33,12 @@ impl ChubbyClient {
         }
         
         let resp = self.conn.create_session(rpc::CreateSessionRequest{}).await?;
-        let session_id = resp.into_inner().session_id;
+        let session_id = &resp.get_ref().session_id;
+        let lease_length = resp.get_ref().lease_length;
         println!("\treceived session id: {}", session_id);
         self.session = Some(ChubbyClientSession {
-            session_id: session_id,
+            session_id: session_id.clone(),
+            lease_length: Duration::from_secs(lease_length),
         });
         return Ok(());
     }

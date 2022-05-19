@@ -4,6 +4,8 @@ pub struct CreateSessionRequest {}
 pub struct CreateSessionResponse {
     #[prost(string, tag = "1")]
     pub session_id: ::prost::alloc::string::String,
+    #[prost(uint64, tag = "2")]
+    pub lease_length: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct DeleteSessionRequest {

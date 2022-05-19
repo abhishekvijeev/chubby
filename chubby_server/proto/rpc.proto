@@ -1,4 +1,5 @@
 syntax = "proto3";
+// import "google/protobuf/duration.proto";
 
 package rpc;
 
@@ -8,6 +9,7 @@ message CreateSessionRequest {
 
 message CreateSessionResponse {
     string session_id = 1;
+    uint64 lease_length = 2;
 }
 
 message DeleteSessionRequest {

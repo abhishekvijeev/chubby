@@ -29,14 +29,17 @@ impl Chubby for ChubbyServer {
         println!("Received create_session request");
         self.session_counter.inc();
         let session_id = self.session_counter.get();
+
         let session = ChubbySession {
             session_id: session_id,
             start_time: Instant::now(),
             lease_length: constants::LEASE_EXTENSION,
         };
+
         self.sessions.write().unwrap().insert(session_id, session);
         Ok(Response::new(rpc::CreateSessionResponse {
             session_id: session_id.to_string(),
+            lease_length: constants::LEASE_EXTENSION.as_secs(),
         }))
     }
 
