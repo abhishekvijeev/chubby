@@ -17,6 +17,16 @@ pub struct DeleteSessionResponse {
     #[prost(bool, tag = "1")]
     pub success: bool,
 }
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct KeepAliveRequest {
+    #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+}
+#[derive(Clone, PartialEq, ::prost::Message)]
+pub struct KeepAliveResponse {
+    #[prost(uint64, tag = "1")]
+    pub lease_length: u64,
+}
 #[doc = r" Generated client implementations."]
 pub mod chubby_client {
     #![allow(unused_variables, dead_code, missing_docs, clippy::let_unit_value)]
@@ -105,6 +115,20 @@ pub mod chubby_client {
             let path = http::uri::PathAndQuery::from_static("/rpc.chubby/DeleteSession");
             self.inner.unary(request.into_request(), path, codec).await
         }
+        pub async fn keep_alive(
+            &mut self,
+            request: impl tonic::IntoRequest<super::KeepAliveRequest>,
+        ) -> Result<tonic::Response<super::KeepAliveResponse>, tonic::Status> {
+            self.inner.ready().await.map_err(|e| {
+                tonic::Status::new(
+                    tonic::Code::Unknown,
+                    format!("Service was not ready: {}", e.into()),
+                )
+            })?;
+            let codec = tonic::codec::ProstCodec::default();
+            let path = http::uri::PathAndQuery::from_static("/rpc.chubby/KeepAlive");
+            self.inner.unary(request.into_request(), path, codec).await
+        }
     }
 }
 #[doc = r" Generated server implementations."]
@@ -122,6 +146,10 @@ pub mod chubby_server {
             &self,
             request: tonic::Request<super::DeleteSessionRequest>,
         ) -> Result<tonic::Response<super::DeleteSessionResponse>, tonic::Status>;
+        async fn keep_alive(
+            &self,
+            request: tonic::Request<super::KeepAliveRequest>,
+        ) -> Result<tonic::Response<super::KeepAliveResponse>, tonic::Status>;
     }
     #[derive(Debug)]
     pub struct ChubbyServer<T: Chubby> {
@@ -214,6 +242,37 @@ pub mod chubby_server {
                     let fut = async move {
                         let inner = inner.0;
                         let method = DeleteSessionSvc(inner);
+                        let codec = tonic::codec::ProstCodec::default();
+                        let mut grpc = tonic::server::Grpc::new(codec).apply_compression_config(
+                            accept_compression_encodings,
+                            send_compression_encodings,
+                        );
+                        let res = grpc.unary(method, req).await;
+                        Ok(res)
+                    };
+                    Box::pin(fut)
+                }
+                "/rpc.chubby/KeepAlive" => {
+                    #[allow(non_camel_case_types)]
+                    struct KeepAliveSvc<T: Chubby>(pub Arc<T>);
+                    impl<T: Chubby> tonic::server::UnaryService<super::KeepAliveRequest> for KeepAliveSvc<T> {
+                        type Response = super::KeepAliveResponse;
+                        type Future = BoxFuture<tonic::Response<Self::Response>, tonic::Status>;
+                        fn call(
+                            &mut self,
+                            request: tonic::Request<super::KeepAliveRequest>,
+                        ) -> Self::Future {
+                            let inner = self.0.clone();
+                            let fut = async move { (*inner).keep_alive(request).await };
+                            Box::pin(fut)
+                        }
+                    }
+                    let accept_compression_encodings = self.accept_compression_encodings;
+                    let send_compression_encodings = self.send_compression_encodings;
+                    let inner = self.inner.clone();
+                    let fut = async move {
+                        let inner = inner.0;
+                        let method = KeepAliveSvc(inner);
                         let codec = tonic::codec::ProstCodec::default();
                         let mut grpc = tonic::server::Grpc::new(codec).apply_compression_config(
                             accept_compression_encodings,

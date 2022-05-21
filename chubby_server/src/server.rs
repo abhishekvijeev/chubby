@@ -50,13 +50,21 @@ impl Chubby for ChubbyServer {
         println!("Received delete_session request");
         Ok(Response::new(rpc::DeleteSessionResponse { success: true }))
     }
+
+    async fn keep_alive(
+        &self,
+        request: tonic::Request<rpc::KeepAliveRequest>,
+    ) -> Result<tonic::Response<rpc::KeepAliveResponse>, tonic::Status> {
+        println!("Received keep_alive request");
+        Ok(Response::new(rpc::KeepAliveResponse { lease_length: 1 }))
+    }
 }
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let addr = "127.0.0.1:50051".parse().unwrap();
     let server = ChubbyServer {
-        addr: addr,
+        addr,
         session_counter: ConsistentCounter::new(0),
         sessions: Arc::new(RwLock::new(HashMap::new())),
     };

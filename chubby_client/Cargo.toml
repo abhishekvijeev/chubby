@@ -7,4 +7,6 @@ edition = "2021"
 
 [dependencies]
 chubby_server = { path = "../chubby_server" }
+futures = "0.3.21"
+tokio = { version = "1", features = ["full"] }
 tonic = "0.6"

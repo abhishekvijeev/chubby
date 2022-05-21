@@ -20,8 +20,12 @@ pub enum ChubbyClientError {
 impl Display for ChubbyClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let x = match self {
-            ChubbyClientError::SessionInProgress(x) => format!("session with id {} is in progress", x),
-            ChubbyClientError::SessionDoesNotExist => "there is no currently existing session with the chubby server".to_string(),
+            ChubbyClientError::SessionInProgress(x) => {
+                format!("session with id {} is in progress", x)
+            }
+            ChubbyClientError::SessionDoesNotExist => {
+                "there is no currently existing session with the chubby server".to_string()
+            }
             ChubbyClientError::RpcError(x) => format!("rpc error: {}", x),
             ChubbyClientError::MaxedSeq => "server has run out of sequence numbers".to_string(),
             x => format!("{:?}", x),

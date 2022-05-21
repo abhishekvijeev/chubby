@@ -19,8 +19,17 @@ message DeleteSessionRequest {
 message DeleteSessionResponse {
     bool success = 1;
 }
+
+message KeepAliveRequest {
+    string session_id = 1;
+}
+
+message KeepAliveResponse {
+    uint64 lease_length = 1;
+}
   
 service chubby {
     rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
     rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
+    rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
 }
