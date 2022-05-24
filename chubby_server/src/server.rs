@@ -2,6 +2,8 @@ mod rpc;
 use rpc::chubby_server::Chubby;
 use tonic::{transport::Server, Request, Response, Status};
 
+use chubby_server::raft::Raft;
+
 pub struct ChubbyServer {
     pub addr: std::net::SocketAddr,
 }
@@ -27,8 +29,13 @@ impl Chubby for ChubbyServer {
     }
 }
 
+const NUM_NODES: u32 = 5;
+
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut raft = Raft::new(NUM_NODES);
+    raft.init_raft();
+
     let addr = "127.0.0.1:50051".parse().unwrap();
     let server = ChubbyServer { addr: addr };
     println!("Server listening on {}", addr);
