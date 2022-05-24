@@ -2,6 +2,7 @@ mod constants;
 mod rpc;
 use atomic_counter::AtomicCounter;
 use atomic_counter::ConsistentCounter;
+use chubby_server::raft::Raft;
 use rpc::chubby_server::Chubby;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -9,7 +10,6 @@ use std::time::{Duration, Instant};
 use tokio;
 use tokio::sync::broadcast;
 use tonic::{transport::Server, Request, Response, Status};
-use chubby_server::raft::Raft;
 
 pub struct ChubbySession {
     session_id: usize,
@@ -153,6 +153,9 @@ impl Chubby for ChubbyServer {
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
+    let mut raft = Raft::new(constants::NUM_NODES);
+    raft.init_raft();
+
     let addr = "127.0.0.1:50051".parse().unwrap();
     let server = ChubbyServer {
         addr,
