@@ -145,4 +145,31 @@ impl ChubbyClient {
         }
         return Ok(());
     }
+
+    pub async fn open(&mut self, path: String) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        return Ok(());
+    }
+
+    pub async fn acquire(&mut self, path: String) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        return Ok(());
+    }
+
+    pub async fn release(&mut self, path: String) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        return Ok(());
+    }
+
+    pub async fn get_contents(
+        &mut self,
+        path: String,
+    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        return Ok(());
+    }
+
+    pub async fn set_contents(
+        &mut self,
+        path: String,
+        contents: String,
+    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        return Ok(());
+    }
 }

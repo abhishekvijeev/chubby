@@ -107,6 +107,47 @@ impl Chubby for ChubbyServer {
         }
         Ok(Response::new(rpc::KeepAliveResponse { lease_length: 1 }))
     }
+
+    async fn open(
+        &self,
+        request: tonic::Request<rpc::OpenRequest>,
+    ) -> Result<tonic::Response<rpc::OpenResponse>, tonic::Status> {
+        Ok(Response::new(rpc::OpenResponse {}))
+    }
+
+    async fn acquire(
+        &self,
+        request: tonic::Request<rpc::AcquireRequest>,
+    ) -> Result<tonic::Response<rpc::AcquireResponse>, tonic::Status> {
+        Ok(Response::new(rpc::AcquireResponse {
+            status: true,
+            fence_token: 1,
+        }))
+    }
+
+    async fn release(
+        &self,
+        request: tonic::Request<rpc::ReleaseRequest>,
+    ) -> Result<tonic::Response<rpc::ReleaseResponse>, tonic::Status> {
+        Ok(Response::new(rpc::ReleaseResponse { status: true }))
+    }
+
+    async fn get_contents(
+        &self,
+        request: tonic::Request<rpc::GetContentsRequest>,
+    ) -> Result<tonic::Response<rpc::GetContentsResponse>, tonic::Status> {
+        Ok(Response::new(rpc::GetContentsResponse {
+            status: true,
+            contents: String::from(""),
+        }))
+    }
+
+    async fn set_contents(
+        &self,
+        request: tonic::Request<rpc::SetContentsRequest>,
+    ) -> Result<tonic::Response<rpc::SetContentsResponse>, tonic::Status> {
+        Ok(Response::new(rpc::SetContentsResponse { status: true }))
+    }
 }
 
 #[tokio::main]

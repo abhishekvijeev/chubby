@@ -27,9 +27,58 @@ message KeepAliveRequest {
 message KeepAliveResponse {
     uint64 lease_length = 1;
 }
+
+message OpenRequest {
+    string path = 1;
+}
+
+message OpenResponse {
+}
+
+message AcquireRequest{
+    string path = 1;
+}
+
+message AcquireResponse {
+    bool status = 1;
+    uint64 fence_token = 2;
+}
+
+message ReleaseRequest{
+    string path = 1;
+    uint64 fence_token = 2;
+}
+
+message ReleaseResponse {
+    bool status = 1;    // do we need a status here?
+}
+
+message GetContentsRequest {
+    string path = 1;    // do we need a fence token here?
+}
+
+message GetContentsResponse {
+    bool status = 1;
+    string contents = 2;
+}
+
+message SetContentsRequest {
+    string path = 1;
+    uint64 fence_token = 2;
+    string contents = 3;
+}
+
+message SetContentsResponse {
+    bool status = 1;
+}
   
 service chubby {
     rpc CreateSession(CreateSessionRequest) returns (CreateSessionResponse);
     rpc DeleteSession(DeleteSessionRequest) returns (DeleteSessionResponse);
     rpc KeepAlive(KeepAliveRequest) returns (KeepAliveResponse);
+    rpc Open(OpenRequest) returns (OpenResponse);
+    rpc Acquire(AcquireRequest) returns (AcquireResponse);
+    rpc Release(ReleaseRequest) returns (ReleaseResponse);
+    rpc GetContents(GetContentsRequest) returns (GetContentsResponse);
+    rpc SetContents(SetContentsRequest) returns (SetContentsResponse);
 }
