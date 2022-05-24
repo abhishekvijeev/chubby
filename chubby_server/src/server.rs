@@ -9,6 +9,7 @@ use std::time::{Duration, Instant};
 use tokio;
 use tokio::sync::broadcast;
 use tonic::{transport::Server, Request, Response, Status};
+use chubby_server::raft::Raft;
 
 pub struct ChubbySession {
     session_id: usize,
