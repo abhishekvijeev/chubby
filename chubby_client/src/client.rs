@@ -123,6 +123,7 @@ impl ChubbyClient {
     pub async fn delete_session(&mut self) -> Result<(), Box<(dyn Error + Send + Sync)>> {
         println!("ChubbyClient::delete_session()");
         // TODO: Check if connection is valid, else re-establish
+        // TODO: Release lock before calling await
         println!("\tacquiring lock");
         let session_option = &mut (*self.session.lock().await);
         println!("\tacquired lock");
@@ -147,6 +148,21 @@ impl ChubbyClient {
     }
 
     pub async fn open(&mut self, path: String) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        println!("ChubbyClient::open()");
+        // TODO: Check if connection is valid, else re-establish
+        // TODO: Release lock before calling await
+        println!("\tacquiring lock");
+        let session_option = &mut (*self.session.lock().await);
+        println!("\tacquired lock");
+        if let Some(session) = session_option {
+            let resp = session
+                .conn
+                .open(rpc::OpenRequest { path: path.clone() })
+                .await?;
+        } else {
+            println!("\tsession doesn't exist");
+            return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+        }
         return Ok(());
     }
 

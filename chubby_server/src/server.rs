@@ -5,13 +5,27 @@ use atomic_counter::ConsistentCounter;
 use chubby_server::raft::Raft;
 use rpc::chubby_server::Chubby;
 use std::collections::HashMap;
+use std::collections::HashSet;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 use tokio;
 use tokio::sync::broadcast;
 use tonic::{transport::Server, Request, Response, Status};
 
-pub struct ChubbySession {
+enum LockMode {
+    EXCLUSIVE,
+    SHARED,
+    FREE,
+}
+
+struct Lock {
+    path: String,
+    mode: LockMode,
+    content: String,
+    acquired_by: HashSet<usize>,
+}
+
+struct ChubbySession {
     session_id: usize,
     start_time: Instant,
     lease_length: Duration,
@@ -22,9 +36,11 @@ pub struct ChubbySession {
 }
 
 pub struct ChubbyServer {
-    pub addr: std::net::SocketAddr,
-    pub session_counter: ConsistentCounter,
-    pub sessions: Arc<tokio::sync::Mutex<HashMap<usize, ChubbySession>>>,
+    addr: std::net::SocketAddr,
+    session_counter: ConsistentCounter,
+    sessions: Arc<tokio::sync::Mutex<HashMap<usize, ChubbySession>>>,
+    kvstore: Arc<tokio::sync::Mutex<Raft>>,
+    locks: Arc<tokio::sync::Mutex<HashMap<String, Lock>>>,
 }
 
 #[tonic::async_trait]
@@ -113,6 +129,22 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::OpenRequest>,
     ) -> Result<tonic::Response<rpc::OpenResponse>, tonic::Status> {
+        let path = request.into_inner().path;
+        // TODO: Validate path and return error for invalid paths
+
+        // Checks that the lock path doesn't already exist
+        // let resp = self.kvstore.lock().await.get(path.clone());
+        // if resp.is_err()
+        {
+            // self.kvstore.lock().await.set(path, "".to_string());
+            let lock = Lock {
+                path: path.clone(),
+                mode: LockMode::FREE,
+                content: "".to_string(),
+                acquired_by: HashSet::new(),
+            };
+            self.locks.lock().await.insert(path, lock);
+        }
         Ok(Response::new(rpc::OpenResponse {}))
     }
 
@@ -120,6 +152,9 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::AcquireRequest>,
     ) -> Result<tonic::Response<rpc::AcquireResponse>, tonic::Status> {
+        let path = request.into_inner().path;
+        // TODO: Validate path and return error for invalid paths
+
         Ok(Response::new(rpc::AcquireResponse {
             status: true,
             fence_token: 1,
@@ -130,6 +165,9 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::ReleaseRequest>,
     ) -> Result<tonic::Response<rpc::ReleaseResponse>, tonic::Status> {
+        let path = request.into_inner().path;
+        // TODO: Validate path and return error for invalid paths
+
         Ok(Response::new(rpc::ReleaseResponse { status: true }))
     }
 
@@ -137,6 +175,9 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::GetContentsRequest>,
     ) -> Result<tonic::Response<rpc::GetContentsResponse>, tonic::Status> {
+        let path = request.into_inner().path;
+        // TODO: Validate path and return error for invalid paths
+
         Ok(Response::new(rpc::GetContentsResponse {
             status: true,
             contents: String::from(""),
@@ -147,6 +188,9 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::SetContentsRequest>,
     ) -> Result<tonic::Response<rpc::SetContentsResponse>, tonic::Status> {
+        let path = request.into_inner().path;
+        // TODO: Validate path and return error for invalid paths
+
         Ok(Response::new(rpc::SetContentsResponse { status: true }))
     }
 }
@@ -161,6 +205,8 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         addr,
         session_counter: ConsistentCounter::new(0),
         sessions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        kvstore: Arc::new(tokio::sync::Mutex::new(raft)),
+        locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
     };
     println!("Server listening on {}", addr);
     Server::builder()
