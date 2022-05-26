@@ -113,16 +113,25 @@ impl Chubby for ChubbyServer {
         let session = &sessions_map[&session_id];
         let mut timeout_receiver = session.session_timeout_sender.subscribe();
         let mut renew_receiver = session.session_renew_sender.subscribe();
+        let lease_length = session.lease_length;
         drop(sessions_map);
         tokio::select! {
             v = timeout_receiver.recv() => {
                 println!("session {} has timed-out", session_id);
+                // TODO: self.release_locks(session_id);
+                return Ok(Response::new(rpc::KeepAliveResponse { lease_length: lease_length.as_secs() }));
             }
             v = renew_receiver.recv() => {
                 println!("session {}'s lease is being renewed", session_id);
+                let mut _sessions_map = self.sessions.lock().await;
+                let session_option = _sessions_map.get_mut(&session_id);
+                if let Some(session) = session_option {
+                    session.lease_length += constants::LEASE_EXTENSION;
+                    return Ok(Response::new(rpc::KeepAliveResponse { lease_length: session.lease_length.as_secs() }));
+                }
             }
         }
-        Ok(Response::new(rpc::KeepAliveResponse { lease_length: 1 }))
+        Ok(Response::new(rpc::KeepAliveResponse { lease_length: lease_length.as_secs() }))
     }
 
     async fn open(
@@ -198,7 +207,7 @@ impl Chubby for ChubbyServer {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut raft = Raft::new(constants::NUM_NODES);
-    raft.init_raft();
+    // raft.init_raft();
 
     let addr = "127.0.0.1:50051".parse().unwrap();
     let server = ChubbyServer {

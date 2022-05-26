@@ -53,6 +53,38 @@ async fn send_keep_alive(
     }
 }
 
+async fn monitor_session(session: Arc<tokio::sync::Mutex<Option<ChubbyClientSession>>>) {
+    loop {
+        let mut sess = session.lock().await;
+        let session_option = &mut (*sess);
+        if let Some(session) = session_option {
+            let (tx, rx) = oneshot::channel::<
+                tonic::Response<chubby_server::rpc::KeepAliveResponse>,
+            >();
+            // Read all data from session needed to make the RPC and
+            // release the lock before making the RPC
+            let session_id = session.session_id.clone();
+            let lease_length = session.lease_length;
+            drop(sess);
+            let timeout = create_timeout(lease_length);
+            send_keep_alive(session_id, tx).await;
+            tokio::select! {
+                _ = timeout => {
+                    println!("session lease expired, jeopardy begins");
+                    return;
+                }
+                v = rx => {
+                    println!("extending lease of session {} by {:?}", lease_length.as_secs(), v);
+                }
+
+            }
+        } else {
+            // println!("\tfinishing task for session ID {}", session_id_clone);
+            return;
+        }
+    }
+}
+
 impl ChubbyClient {
     pub async fn new() -> Result<ChubbyClient, tonic::transport::Error> {
         println!("ChubbyClient::new()");
@@ -85,36 +117,8 @@ impl ChubbyClient {
         let shared_session = self.session.clone();
         let session_id_clone = session_id.clone();
         tokio::task::spawn(async move {
-            println!("\tspawning task for session ID {}", session_id_clone);
-            loop {
-                let mut sess = shared_session.lock().await;
-                let session_option = &mut (*sess);
-                if let Some(session) = session_option {
-                    let (tx, rx) = oneshot::channel::<
-                        tonic::Response<chubby_server::rpc::KeepAliveResponse>,
-                    >();
-                    // Read all data from session needed to make the RPC and
-                    // release the lock before making the RPC
-                    let session_id = session.session_id.clone();
-                    let lease_length = session.lease_length;
-                    drop(sess);
-                    let timeout = create_timeout(lease_length);
-                    send_keep_alive(session_id, tx).await;
-                    tokio::select! {
-                        _ = timeout => {
-                            println!("session lease expired, jeopardy begins");
-                            return;
-                        }
-                        v = rx => {
-                            println!("got = {:?}", v);
-                        }
-
-                    }
-                } else {
-                    // println!("\tfinishing task for session ID {}", session_id_clone);
-                    return;
-                }
-            }
+            println!("\tspawning task to monitor session ID {}", session_id_clone);
+            monitor_session(shared_session).await;
         });
         // thread::sleep(time::Duration::from_millis(100));
         return Ok(());
