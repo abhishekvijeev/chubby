@@ -7,4 +7,5 @@ mod tests {
     }
 }
 pub mod client;
+mod constants;
 mod err;

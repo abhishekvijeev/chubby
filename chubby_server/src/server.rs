@@ -131,7 +131,9 @@ impl Chubby for ChubbyServer {
                 }
             }
         }
-        Ok(Response::new(rpc::KeepAliveResponse { lease_length: lease_length.as_secs() }))
+        Ok(Response::new(rpc::KeepAliveResponse {
+            lease_length: lease_length.as_secs(),
+        }))
     }
 
     async fn open(

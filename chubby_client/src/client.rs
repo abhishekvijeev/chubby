@@ -1,4 +1,5 @@
 use crate::err::ChubbyClientError;
+use crate::constants;
 use chubby_server::rpc;
 use std::error::Error;
 use std::sync::Arc;
@@ -17,6 +18,7 @@ struct ChubbyClientSession {
     session_id: String,
     lease_length: Duration,
     conn: rpc::chubby_client::ChubbyClient<Channel>,
+    in_jeopardy: bool,
 }
 
 // async fn send_keep_alive(session: &mut Option<ChubbyClientSession>) {
@@ -42,23 +44,88 @@ async fn create_timeout(duration: Duration) {
 
 async fn send_keep_alive(
     session_id: String,
-    tx: tokio::sync::oneshot::Sender<tonic::Response<chubby_server::rpc::KeepAliveResponse>>,
+    keep_alive_sender: tokio::sync::oneshot::Sender<tonic::Response<chubby_server::rpc::KeepAliveResponse>>,
 ) {
     let mut conn = rpc::chubby_client::ChubbyClient::connect("http://127.0.0.1:50051").await;
     if let Ok(conn) = &mut conn {
         let result = conn.keep_alive(rpc::KeepAliveRequest { session_id }).await;
         if let Ok(resp) = result {
-            tx.send(resp);
+            keep_alive_sender.send(resp);
         }
     }
 }
 
-async fn monitor_session(session: Arc<tokio::sync::Mutex<Option<ChubbyClientSession>>>) {
+async fn start_jeopardy(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClientSession>>>) {
+    let mut sess = session_arc.lock().await;
+    let session_option = &mut (*sess);
+    if let Some(session) = session_option {
+        session.in_jeopardy = true;
+        let session_id = session.session_id.clone();
+        let (keep_alive_sender, keep_alive_receiver) = oneshot::channel::<
+            tonic::Response<chubby_server::rpc::KeepAliveResponse>,
+        >();
+        drop(sess);
+        tokio::task::spawn(async move {
+            try_end_jeopardy(session_id, keep_alive_sender).await;
+        });
+
+        let timeout = create_timeout(constants::JEOPARDY_DURATION);
+        tokio::select! {
+            _ = timeout => {
+                println!("jeopardy period has expired - terminating session");
+                let mut sess = session_arc.lock().await;
+                let session_option = &mut (*sess);
+                *session_option = None;
+                // if let Some(session) = session_option {
+                //     session.expired = true;
+                // }
+            }
+            keep_alive_result = keep_alive_receiver => {
+                println!("session has been revived!");
+                let mut sess = session_arc.lock().await;
+                let session_option = &mut (*sess);
+                if let Some(session) = session_option {
+                    if let Ok(response) = keep_alive_result {
+                        // TODO: Fix different lease length semantics
+                        // at client and server
+                        let lease_length = response.into_inner().lease_length;
+                        session.lease_length = Duration::from_secs(lease_length);
+                        session.in_jeopardy = false;
+                    }
+                    
+                }
+            }
+        }
+    }
+}
+
+async fn try_end_jeopardy(session_id: String,
+    keep_alive_sender: tokio::sync::oneshot::Sender<tonic::Response<chubby_server::rpc::KeepAliveResponse>>) {
+    let server_list = vec!["http://127.0.0.1:50051"];
     loop {
-        let mut sess = session.lock().await;
+        for &server_addr in server_list.iter() {
+            // try to contact server 'i'
+            // if successful, jeopardy is over, session has been saved
+            let mut conn_status = rpc::chubby_client::ChubbyClient::connect(server_addr).await;
+            if let Ok(conn) = &mut conn_status {
+                println!("successfully established connection with server {}, sending KeepAlive", server_addr);
+                let result = conn.keep_alive(rpc::KeepAliveRequest { session_id: session_id.clone() }).await;
+                if let Ok(resp) = result {
+                    println!("received KeepAlive response from server{}", server_addr);
+                    keep_alive_sender.send(resp);
+                    return;
+                }
+            }
+        }
+    }
+}
+
+async fn monitor_session(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClientSession>>>) {
+    loop {
+        let mut sess = session_arc.lock().await;
         let session_option = &mut (*sess);
         if let Some(session) = session_option {
-            let (tx, rx) = oneshot::channel::<
+            let (keep_alive_sender, keep_alive_receiver) = oneshot::channel::<
                 tonic::Response<chubby_server::rpc::KeepAliveResponse>,
             >();
             // Read all data from session needed to make the RPC and
@@ -66,17 +133,36 @@ async fn monitor_session(session: Arc<tokio::sync::Mutex<Option<ChubbyClientSess
             let session_id = session.session_id.clone();
             let lease_length = session.lease_length;
             drop(sess);
+
+            // TODO: Check if the timeout is correct
+            // TODO: Fix different lease length semantics
+            // at client and server
             let timeout = create_timeout(lease_length);
-            send_keep_alive(session_id, tx).await;
+            send_keep_alive(session_id.clone(), keep_alive_sender).await;
             tokio::select! {
                 _ = timeout => {
                     println!("session lease expired, jeopardy begins");
-                    return;
+                    // After start_jeopardy() returns, one of two things happens:
+                    // 1) The session is saved and then next iteration of this loop would
+                    // proceed as normal
+                    // 2) The session is terminated and set to None, in which case the
+                    // loop stops execution
+                    start_jeopardy(session_arc.clone()).await;
                 }
-                v = rx => {
-                    println!("extending lease of session {} by {:?}", lease_length.as_secs(), v);
+                keep_alive_result = keep_alive_receiver => {
+                    let mut sess = session_arc.lock().await;
+                    let session_option = &mut (*sess);
+                    if let Some(session) = session_option {
+                    
+                        if let Ok(response) = keep_alive_result {
+                            // TODO: Fix different lease length semantics
+                            // at client and server
+                            let lease_length = response.into_inner().lease_length;
+                            println!("resetting lease of session {} to {:?}", session_id, lease_length);
+                            session.lease_length = Duration::from_secs(lease_length);
+                        }
+                    }
                 }
-
             }
         } else {
             // println!("\tfinishing task for session ID {}", session_id_clone);
@@ -112,6 +198,7 @@ impl ChubbyClient {
             session_id: session_id.clone(),
             lease_length: Duration::from_secs(lease_length),
             conn,
+            in_jeopardy: false,
         };
         *self.session.lock().await = Some(session);
         let shared_session = self.session.clone();
