@@ -25,51 +25,62 @@ message KeepAliveRequest {
 }
 
 message KeepAliveResponse {
-    uint64 lease_length = 1;
+    bool expired = 1;
+    uint64 lease_length = 2;
 }
 
 message OpenRequest {
-    string path = 1;
+    string session_id = 1;
+    string path = 2;
 }
 
 message OpenResponse {
+    bool expired = 1;
 }
 
 message AcquireRequest{
-    string path = 1;
+    string session_id = 1;
+    string path = 2;
 }
 
 message AcquireResponse {
-    bool status = 1;
-    uint64 fence_token = 2;
+    bool expired = 1;
+    bool acquired_lock = 2;
+    uint64 fence_token = 3;
 }
 
 message ReleaseRequest{
-    string path = 1;
-    uint64 fence_token = 2;
+    string session_id = 1;
+    string path = 2;
+    uint64 fence_token = 3;
 }
 
 message ReleaseResponse {
-    bool status = 1;    // do we need a status here?
+    bool expired = 1;
+    bool released_lock = 2;
 }
 
 message GetContentsRequest {
-    string path = 1;    // do we need a fence token here?
+    string session_id = 1;
+    string path = 2;    // do we need a fence token here?
 }
 
 message GetContentsResponse {
-    bool status = 1;
-    string contents = 2;
-}
-
-message SetContentsRequest {
-    string path = 1;
-    uint64 fence_token = 2;
+    bool expired = 1;
+    bool get_contents_status = 2;
     string contents = 3;
 }
 
+message SetContentsRequest {
+    string session_id = 1;
+    string path = 2;
+    uint64 fence_token = 3;
+    string contents = 4;
+}
+
 message SetContentsResponse {
-    bool status = 1;
+    bool expired = 1;
+    bool set_contents_status = 2;
 }
   
 service chubby {

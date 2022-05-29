@@ -24,67 +24,89 @@ pub struct KeepAliveRequest {
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct KeepAliveResponse {
-    #[prost(uint64, tag = "1")]
+    #[prost(bool, tag = "1")]
+    pub expired: bool,
+    #[prost(uint64, tag = "2")]
     pub lease_length: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct OpenRequest {
     #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
-pub struct OpenResponse {}
+pub struct OpenResponse {
+    #[prost(bool, tag = "1")]
+    pub expired: bool,
+}
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AcquireRequest {
     #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AcquireResponse {
     #[prost(bool, tag = "1")]
-    pub status: bool,
-    #[prost(uint64, tag = "2")]
+    pub expired: bool,
+    #[prost(bool, tag = "2")]
+    pub acquired_lock: bool,
+    #[prost(uint64, tag = "3")]
     pub fence_token: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReleaseRequest {
     #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "2")]
+    #[prost(uint64, tag = "3")]
     pub fence_token: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReleaseResponse {
-    /// do we need a status here?
     #[prost(bool, tag = "1")]
-    pub status: bool,
+    pub expired: bool,
+    #[prost(bool, tag = "2")]
+    pub released_lock: bool,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetContentsRequest {
-    /// do we need a fence token here?
     #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+    /// do we need a fence token here?
+    #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct GetContentsResponse {
     #[prost(bool, tag = "1")]
-    pub status: bool,
-    #[prost(string, tag = "2")]
+    pub expired: bool,
+    #[prost(bool, tag = "2")]
+    pub get_contents_status: bool,
+    #[prost(string, tag = "3")]
     pub contents: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SetContentsRequest {
     #[prost(string, tag = "1")]
+    pub session_id: ::prost::alloc::string::String,
+    #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "2")]
+    #[prost(uint64, tag = "3")]
     pub fence_token: u64,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag = "4")]
     pub contents: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct SetContentsResponse {
     #[prost(bool, tag = "1")]
-    pub status: bool,
+    pub expired: bool,
+    #[prost(bool, tag = "2")]
+    pub set_contents_status: bool,
 }
 #[doc = r" Generated client implementations."]
 pub mod chubby_client {

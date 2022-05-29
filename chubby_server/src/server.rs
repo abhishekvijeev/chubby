@@ -30,9 +30,8 @@ struct ChubbySession {
     start_time: Instant,
     lease_length: Duration,
     session_renew_sender: broadcast::Sender<u32>,
-    // session_renew_receiver: broadcast::Receiver<u32>,
     session_timeout_sender: broadcast::Sender<u32>,
-    // session_timeout_receiver: broadcast::Receiver<u32>,
+    expired: bool,
 }
 
 pub struct ChubbyServer {
@@ -60,9 +59,8 @@ impl Chubby for ChubbyServer {
             start_time: Instant::now(),
             lease_length: constants::LEASE_EXTENSION,
             session_renew_sender,
-            // session_renew_receiver,
             session_timeout_sender,
-            // session_timeout_receiver,
+            expired: false,
         };
         self.sessions.lock().await.insert(session_id, session);
         let shared_session = self.sessions.clone();
@@ -71,20 +69,34 @@ impl Chubby for ChubbyServer {
             let mut interval = tokio::time::interval(Duration::from_secs(1));
             loop {
                 interval.tick().await;
-                let sessions_map = shared_session.lock().await;
-                let session = &sessions_map[&session_id_clone];
-                if session.start_time.elapsed() > session.lease_length {
-                    println!("Session ID {}'s lease has expired", session_id_clone);
-                    session.session_timeout_sender.send(1);
+                let mut sessions_map = shared_session.lock().await;
+                let session_option = sessions_map.get_mut(&session_id);
+                if let Some(session) = session_option {
+                    println!(
+                        "Session {} time elapsed: {:?}, lease length: {:?}",
+                        session_id,
+                        session.start_time.elapsed(),
+                        session.lease_length
+                    );
+                    if session.start_time.elapsed() > session.lease_length {
+                        println!("Session ID {}'s lease has expired", session_id_clone);
+                        session.expired = true;
+                        let r = session.session_timeout_sender.send(1);
+                        if r.is_err() {
+                            println!("Could not send message to timeout channel");
+                        }
+                        return;
+                    } else if (session.start_time + session.lease_length)
+                        - std::time::Instant::now()
+                        <= Duration::from_secs(1)
+                    {
+                        // check if we're close to the lease expiring - if so, renew the lease and
+                        // send a message to KeepAlive so that it can return (if there is a
+                        // pending keepalive that's blocked)
+                        session.session_renew_sender.send(1);
+                    }
+                } else {
                     return;
-                } else if (session.start_time + session.lease_length) - std::time::Instant::now()
-                    <= Duration::from_secs(2)
-                {
-                    // check if we're close to the lease expiring - if so, renew the lease and
-                    // send a message to KeepAlive so that it can return (if there is a
-                    // pending keepalive that's blocked)
-                    println!("Session ID {}'s lease is being renewed", session_id_clone);
-                    session.session_renew_sender.send(1);
                 }
             }
         });
@@ -100,6 +112,13 @@ impl Chubby for ChubbyServer {
         request: tonic::Request<rpc::DeleteSessionRequest>,
     ) -> Result<tonic::Response<rpc::DeleteSessionResponse>, tonic::Status> {
         println!("Received delete_session request");
+        let session_id = request.into_inner().session_id.parse::<usize>().unwrap();
+        let mut sessions_map = self.sessions.lock().await;
+        let session_option = sessions_map.get_mut(&session_id);
+        if let Some(session) = session_option {
+            session.expired = true;
+        }
+
         Ok(Response::new(rpc::DeleteSessionResponse { success: true }))
     }
 
@@ -111,6 +130,14 @@ impl Chubby for ChubbyServer {
         let session_id = request.into_inner().session_id.parse::<usize>().unwrap();
         let sessions_map = self.sessions.lock().await;
         let session = &sessions_map[&session_id];
+
+        if session.expired {
+            return Ok(Response::new(rpc::KeepAliveResponse {
+                expired: true,
+                lease_length: constants::LEASE_EXTENSION.as_secs(),
+            }));
+        }
+
         let mut timeout_receiver = session.session_timeout_sender.subscribe();
         let mut renew_receiver = session.session_renew_sender.subscribe();
         let lease_length = session.lease_length;
@@ -119,29 +146,37 @@ impl Chubby for ChubbyServer {
             v = timeout_receiver.recv() => {
                 println!("session {} has timed-out", session_id);
                 // TODO: self.release_locks(session_id);
-                return Ok(Response::new(rpc::KeepAliveResponse { lease_length: lease_length.as_secs() }));
+                return Ok(Response::new(rpc::KeepAliveResponse { expired: true, lease_length: constants::LEASE_EXTENSION.as_secs() }));
             }
             v = renew_receiver.recv() => {
-                println!("session {}'s lease is being renewed", session_id);
-                let mut _sessions_map = self.sessions.lock().await;
-                let session_option = _sessions_map.get_mut(&session_id);
+                println!("session {}'s lease is being renewed by {}s", session_id, constants::LEASE_EXTENSION.as_secs());
+                let mut sessions_map = self.sessions.lock().await;
+                let session_option = sessions_map.get_mut(&session_id);
                 if let Some(session) = session_option {
                     session.lease_length += constants::LEASE_EXTENSION;
-                    return Ok(Response::new(rpc::KeepAliveResponse { lease_length: session.lease_length.as_secs() }));
+                    return Ok(Response::new(rpc::KeepAliveResponse { expired: false, lease_length: constants::LEASE_EXTENSION.as_secs() }));
+                } else {
+                    return Ok(Response::new(rpc::KeepAliveResponse { expired: true, lease_length: constants::LEASE_EXTENSION.as_secs() }));
                 }
             }
         }
-        Ok(Response::new(rpc::KeepAliveResponse {
-            lease_length: lease_length.as_secs(),
-        }))
     }
 
     async fn open(
         &self,
         request: tonic::Request<rpc::OpenRequest>,
     ) -> Result<tonic::Response<rpc::OpenResponse>, tonic::Status> {
-        let path = request.into_inner().path;
+        let request = request.into_inner();
+        let session_id = request.session_id.parse::<usize>().unwrap();
+        let sessions_map = self.sessions.lock().await;
+        let session = &sessions_map[&session_id];
+
+        if session.expired {
+            return Ok(Response::new(rpc::OpenResponse { expired: true }));
+        }
+
         // TODO: Validate path and return error for invalid paths
+        let path = request.path;
 
         // Checks that the lock path doesn't already exist
         // let resp = self.kvstore.lock().await.get(path.clone());
@@ -156,18 +191,32 @@ impl Chubby for ChubbyServer {
             };
             self.locks.lock().await.insert(path, lock);
         }
-        Ok(Response::new(rpc::OpenResponse {}))
+        Ok(Response::new(rpc::OpenResponse { expired: false }))
     }
 
     async fn acquire(
         &self,
         request: tonic::Request<rpc::AcquireRequest>,
     ) -> Result<tonic::Response<rpc::AcquireResponse>, tonic::Status> {
-        let path = request.into_inner().path;
+        let request = request.into_inner();
+        let session_id = request.session_id.parse::<usize>().unwrap();
+        let sessions_map = self.sessions.lock().await;
+        let session = &sessions_map[&session_id];
+
+        if session.expired {
+            return Ok(Response::new(rpc::AcquireResponse {
+                expired: true,
+                acquired_lock: false,
+                fence_token: 1,
+            }));
+        }
+
+        let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
         Ok(Response::new(rpc::AcquireResponse {
-            status: true,
+            expired: false,
+            acquired_lock: true,
             fence_token: 1,
         }))
     }
@@ -176,21 +225,50 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::ReleaseRequest>,
     ) -> Result<tonic::Response<rpc::ReleaseResponse>, tonic::Status> {
-        let path = request.into_inner().path;
+        let request = request.into_inner();
+        let session_id = request.session_id.parse::<usize>().unwrap();
+        let sessions_map = self.sessions.lock().await;
+        let session = &sessions_map[&session_id];
+
+        if session.expired {
+            return Ok(Response::new(rpc::ReleaseResponse {
+                expired: true,
+                released_lock: false,
+            }));
+        }
+
+        let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
-        Ok(Response::new(rpc::ReleaseResponse { status: true }))
+        Ok(Response::new(rpc::ReleaseResponse {
+            expired: false,
+            released_lock: true,
+        }))
     }
 
     async fn get_contents(
         &self,
         request: tonic::Request<rpc::GetContentsRequest>,
     ) -> Result<tonic::Response<rpc::GetContentsResponse>, tonic::Status> {
-        let path = request.into_inner().path;
+        let request = request.into_inner();
+        let session_id = request.session_id.parse::<usize>().unwrap();
+        let sessions_map = self.sessions.lock().await;
+        let session = &sessions_map[&session_id];
+
+        if session.expired {
+            return Ok(Response::new(rpc::GetContentsResponse {
+                expired: true,
+                get_contents_status: false,
+                contents: String::from(""),
+            }));
+        }
+
+        let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
         Ok(Response::new(rpc::GetContentsResponse {
-            status: true,
+            expired: false,
+            get_contents_status: true,
             contents: String::from(""),
         }))
     }
@@ -199,10 +277,25 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::SetContentsRequest>,
     ) -> Result<tonic::Response<rpc::SetContentsResponse>, tonic::Status> {
-        let path = request.into_inner().path;
+        let request = request.into_inner();
+        let session_id = request.session_id.parse::<usize>().unwrap();
+        let sessions_map = self.sessions.lock().await;
+        let session = &sessions_map[&session_id];
+
+        if session.expired {
+            return Ok(Response::new(rpc::SetContentsResponse {
+                expired: true,
+                set_contents_status: false,
+            }));
+        }
+
+        let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
-        Ok(Response::new(rpc::SetContentsResponse { status: true }))
+        Ok(Response::new(rpc::SetContentsResponse {
+            expired: false,
+            set_contents_status: true,
+        }))
     }
 }
 
