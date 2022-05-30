@@ -4,7 +4,7 @@ use chubby_client::client::ChubbyClient;
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut client = ChubbyClient::new().await?;
-    client.create_session().await;
+    client.create_session(true).await;
     std::thread::sleep(std::time::Duration::from_secs(30));
     client.delete_session().await;
 
