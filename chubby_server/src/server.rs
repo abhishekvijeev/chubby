@@ -72,12 +72,12 @@ impl Chubby for ChubbyServer {
                 let mut sessions_map = shared_session.lock().await;
                 let session_option = sessions_map.get_mut(&session_id);
                 if let Some(session) = session_option {
-                    println!(
-                        "Session {} time elapsed: {:?}, lease length: {:?}",
-                        session_id,
-                        session.start_time.elapsed(),
-                        session.lease_length
-                    );
+                    // println!(
+                    //     "Session {} time elapsed: {:?}, lease length: {:?}",
+                    //     session_id,
+                    //     session.start_time.elapsed(),
+                    //     session.lease_length
+                    // );
                     if session.start_time.elapsed() > session.lease_length {
                         println!("Session ID {}'s lease has expired", session_id_clone);
                         session.expired = true;

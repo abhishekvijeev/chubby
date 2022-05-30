@@ -224,7 +224,7 @@ impl ChubbyClient {
         });
     }
 
-    pub async fn create_session(&mut self) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    pub async fn create_session(&mut self, keep_alive: bool) -> Result<(), Box<(dyn Error + Send + Sync)>> {
         println!("ChubbyClient::create_session()");
         // TODO: Check if connection is valid, else re-establish
         if let Some(session) = &*self.session.lock().await {
@@ -248,10 +248,13 @@ impl ChubbyClient {
         *self.session.lock().await = Some(session);
         let shared_session = self.session.clone();
         let session_id_clone = session_id.clone();
-        tokio::task::spawn(async move {
-            println!("\tspawning task to monitor session ID {}", session_id_clone);
-            monitor_session(shared_session).await;
-        });
+
+        if keep_alive {
+            tokio::task::spawn(async move {
+                println!("\tspawning task to monitor session ID {}", session_id_clone);
+                monitor_session(shared_session).await;
+            });
+        }
         // thread::sleep(time::Duration::from_millis(100));
         return Ok(());
     }
