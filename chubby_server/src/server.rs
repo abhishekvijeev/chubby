@@ -302,7 +302,7 @@ impl Chubby for ChubbyServer {
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let mut raft = Raft::new(constants::NUM_NODES);
-    // raft.init_raft();
+    raft.init_raft();
 
     let addr = "127.0.0.1:50051".parse().unwrap();
     let server = ChubbyServer {

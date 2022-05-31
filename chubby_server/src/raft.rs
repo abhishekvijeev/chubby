@@ -6,6 +6,7 @@
 
 use slog::Drain;
 use std::collections::{HashMap, VecDeque};
+use std::mem::take;
 use std::sync::mpsc::{self, Receiver, Sender, SyncSender, TryRecvError};
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
@@ -20,16 +21,17 @@ use regex::Regex;
 use slog::{error, info, o};
 
 pub struct Raft {
-    num_nodes: u32,
+    num_nodes: u64,
     logger: slog::Logger,
     proposals: Arc<Mutex<VecDeque<Proposal>>>,
     tx_stop: Sender<Signal>,
     rx_stop: Arc<Mutex<Receiver<Signal>>>,
+    nodes: Vec<Arc<Mutex<Node>>>,
     handles: Vec<JoinHandle<()>>,
 }
 
 impl Raft {
-    pub fn new(num_nodes: u32) -> Self {
+    pub fn new(num_nodes: u64) -> Self {
         let logger = Raft::init_logger();
 
         // A global pending proposals queue. New proposals will be pushed back into the queue, and
@@ -45,6 +47,7 @@ impl Raft {
             proposals,
             tx_stop,
             rx_stop,
+            nodes: Vec::with_capacity(num_nodes as usize),
             handles: Vec::new(),
         }
     }
@@ -61,7 +64,7 @@ impl Raft {
     }
 
     pub fn init_raft(&mut self) {
-        // Create 5 mailboxes to send/receive messages. Every node holds a `Receiver` to receive
+        // Create one mailbox for each node to send/receive messages. Every node holds a `Receiver` to receive
         // messages from others, and uses the respective `Sender` to send messages to others.
         let (mut tx_vec, mut rx_vec) = (Vec::new(), Vec::new());
         for _ in 0..self.num_nodes {
@@ -70,11 +73,12 @@ impl Raft {
             rx_vec.push(rx);
         }
 
-        // let mut handles = Vec::new();
         for (i, rx) in rx_vec.into_iter().enumerate() {
-            // A map[peer_id -> sender]. In the example we create 5 nodes, with ids in [1, 5].
-            let mailboxes = (1..6u64).zip(tx_vec.iter().cloned()).collect();
-            let mut node = match i {
+            // A map[peer_id -> sender].
+            let mailboxes = (1..(self.num_nodes + 1))
+                .zip(tx_vec.iter().cloned())
+                .collect();
+            let node = match i {
                 // Peer 1 is the leader.
                 0 => Node::create_raft_leader(1, rx, mailboxes, &self.logger),
                 // Other peers are followers.
@@ -85,22 +89,26 @@ impl Raft {
             // Tick the raft node per 100ms. So use an `Instant` to trace it.
             let mut t = Instant::now();
 
-            // Clone the stop receiver
+            // Clone the stop receiver, logger and node
             let rx_stop_clone = Arc::clone(&self.rx_stop);
             let logger = self.logger.clone();
+            let node = Arc::new(Mutex::new(node));
+            self.nodes.insert(i, Arc::clone(&node));
+
             // Here we spawn the node on a new thread and keep a handle so we can join on them later.
             let handle = thread::spawn(move || loop {
                 thread::sleep(Duration::from_millis(10));
                 loop {
                     // Step raft messages.
-                    match node.my_mailbox.try_recv() {
-                        Ok(msg) => node.step(msg, &logger),
+                    match node.lock().unwrap().my_mailbox.try_recv() {
+                        Ok(msg) => node.lock().unwrap().step(msg, &logger),
                         Err(TryRecvError::Empty) => break,
                         Err(TryRecvError::Disconnected) => return,
                     }
                 }
 
-                let raft_group = match node.raft_group {
+                let mut _node = node.lock().unwrap();
+                let raft_group = match _node.raft_group {
                     Some(ref mut r) => r,
                     // When Node::raft_group is `None` it means the node is not initialized.
                     _ => continue,
@@ -124,8 +132,8 @@ impl Raft {
                 // Handle readies from the raft.
                 on_ready(
                     raft_group,
-                    &mut node.kv_pairs,
-                    &node.mailboxes,
+                    &mut node.lock().unwrap().kv_pairs,
+                    &node.lock().unwrap().mailboxes,
                     &proposals,
                     &logger,
                 );
@@ -139,15 +147,29 @@ impl Raft {
         }
 
         // Propose some conf changes so that followers can be initialized.
-        add_all_followers(self.proposals.as_ref());
+        self.add_all_followers(self.proposals.as_ref());
 
         info!(
             self.logger,
             "Initialized {}-node Raft cluster, start proposing proposals now...", self.num_nodes
         );
+
+        // Put 100 key-value pairs.
+        (0..100u16)
+            .filter(|i| {
+                let (proposal, rx) =
+                    Proposal::normal(format!("key_{}", *i).to_string(), "hello, world".to_owned());
+                self.proposals.lock().unwrap().push_back(proposal);
+                // After we got a response from `rx`, we can assume the put succeeded and following
+                // `get` operations can find the key-value pair.
+                rx.recv().unwrap()
+            })
+            .count();
+
+        info!(self.logger, "Propose 100 proposals success!");
     }
 
-    pub fn propose_normal(&self, key: u16, value: String) {
+    pub fn propose_normal(&self, key: String, value: String) {
         let (proposal, rx) = Proposal::normal(key, value.to_owned());
         self.proposals.lock().unwrap().push_back(proposal);
         // After we got a response from `rx`, we can assume the put succeeded and following
@@ -157,16 +179,48 @@ impl Raft {
         info!(self.logger, "Propose 1 normal proposal success!");
     }
 
-    pub fn terminate(&self) {
+    pub fn get(&mut self, key: String) -> Option<String> {
+        let nodes = take(&mut self.nodes);
+        for (i, node) in nodes.into_iter().enumerate() {
+            if let Some(value) = node.lock().unwrap().kv_pairs.get(&key) {
+                info!(
+                    self.logger,
+                    "Got value {} for key {} from node {}", value, key, i
+                );
+                return Some(value.to_string());
+            }
+        }
+        None
+    }
+
+    pub fn terminate(&mut self) {
         // Send terminate signals
         for _ in 0..self.num_nodes {
             self.tx_stop.send(Signal::Terminate).unwrap();
         }
 
         // Wait for the thread to finish
-        // for th in self.handles.into_iter() {
-        //     th.join().unwrap();
-        // }
+        let handles = take(&mut self.handles);
+        for th in handles {
+            th.join().unwrap();
+        }
+    }
+
+    // Proposes some conf change for all followers.
+    fn add_all_followers(&self, proposals: &Mutex<VecDeque<Proposal>>) {
+        for i in 2..(self.num_nodes + 1) {
+            let mut conf_change = ConfChange::default();
+            conf_change.node_id = i;
+            conf_change.set_change_type(ConfChangeType::AddNode);
+            loop {
+                let (proposal, rx) = Proposal::conf_change(&conf_change);
+                proposals.lock().unwrap().push_back(proposal);
+                if rx.recv().unwrap() {
+                    break;
+                }
+                thread::sleep(Duration::from_millis(100));
+            }
+        }
     }
 }
 
@@ -189,7 +243,7 @@ struct Node {
     mailboxes: HashMap<u64, Sender<Message>>,
     // Key-value pairs after applied. `MemStorage` only contains raft logs,
     // so we need an additional storage engine.
-    kv_pairs: HashMap<u16, String>,
+    kv_pairs: HashMap<String, String>,
 }
 
 impl Node {
@@ -262,7 +316,7 @@ impl Node {
 
 fn on_ready(
     raft_group: &mut RawNode<MemStorage>,
-    kv_pairs: &mut HashMap<u16, String>,
+    kv_pairs: &mut HashMap<String, String>,
     mailboxes: &HashMap<u64, Sender<Message>>,
     proposals: &Mutex<VecDeque<Proposal>>,
     logger: &slog::Logger,
@@ -321,7 +375,7 @@ fn on_ready(
                     // For normal proposals, extract the key-value pair and then
                     // insert them into the kv engine.
                     let data = str::from_utf8(&entry.data).unwrap();
-                    let reg = Regex::new("put ([0-9]+) (.+)").unwrap();
+                    let reg = Regex::new("put (.+) (.+)").unwrap();
                     if let Some(caps) = reg.captures(data) {
                         kv_pairs.insert(caps[1].parse().unwrap(), caps[2].to_string());
                     }
@@ -388,8 +442,8 @@ fn is_initial_msg(msg: &Message) -> bool {
 }
 
 struct Proposal {
-    normal: Option<(u16, String)>, // key is an u16 integer, and value is a string.
-    conf_change: Option<ConfChange>, // conf change.
+    normal: Option<(String, String)>, // key is a string, and value is a string.
+    conf_change: Option<ConfChange>,  // conf change.
     transfer_leader: Option<u64>,
     // If it's proposed, it will be set to the index of the entry.
     proposed: u64,
@@ -409,12 +463,24 @@ impl Proposal {
         (proposal, rx)
     }
 
-    fn normal(key: u16, value: String) -> (Self, Receiver<bool>) {
+    fn normal(key: String, value: String) -> (Self, Receiver<bool>) {
         let (tx, rx) = mpsc::sync_channel(1);
         let proposal = Proposal {
             normal: Some((key, value)),
             conf_change: None,
             transfer_leader: None,
+            proposed: 0,
+            propose_success: tx,
+        };
+        (proposal, rx)
+    }
+
+    fn transfer_leader(transferee: u64) -> (Self, Receiver<bool>) {
+        let (tx, rx) = mpsc::sync_channel(1);
+        let proposal = Proposal {
+            normal: None,
+            conf_change: None,
+            transfer_leader: Some(transferee),
             proposed: 0,
             propose_success: tx,
         };
@@ -430,8 +496,9 @@ fn propose(raft_group: &mut RawNode<MemStorage>, proposal: &mut Proposal) {
     } else if let Some(ref cc) = proposal.conf_change {
         let _ = raft_group.propose_conf_change(vec![], cc.clone());
     } else if let Some(_transferee) = proposal.transfer_leader {
-        // TODO: implement transfer leader.
-        unimplemented!();
+        if let Some(transferee) = proposal.transfer_leader {
+            raft_group.transfer_leader(transferee);
+        }
     }
 
     let last_index2 = raft_group.raft.raft_log.last_index() + 1;
@@ -443,19 +510,10 @@ fn propose(raft_group: &mut RawNode<MemStorage>, proposal: &mut Proposal) {
     }
 }
 
-// Proposes some conf change for peers [2, 5].
-fn add_all_followers(proposals: &Mutex<VecDeque<Proposal>>) {
-    for i in 2..6u64 {
-        let mut conf_change = ConfChange::default();
-        conf_change.node_id = i;
-        conf_change.set_change_type(ConfChangeType::AddNode);
-        loop {
-            let (proposal, rx) = Proposal::conf_change(&conf_change);
-            proposals.lock().unwrap().push_back(proposal);
-            if rx.recv().unwrap() {
-                break;
-            }
-            thread::sleep(Duration::from_millis(100));
-        }
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn test_normal_proposals() -> Result<(), ()> {
+        Ok(())
     }
 }
