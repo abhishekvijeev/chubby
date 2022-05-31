@@ -153,20 +153,6 @@ impl Raft {
             self.logger,
             "Initialized {}-node Raft cluster, start proposing proposals now...", self.num_nodes
         );
-
-        // Put 100 key-value pairs.
-        (0..100u16)
-            .filter(|i| {
-                let (proposal, rx) =
-                    Proposal::normal(format!("key_{}", *i).to_string(), "hello, world".to_owned());
-                self.proposals.lock().unwrap().push_back(proposal);
-                // After we got a response from `rx`, we can assume the put succeeded and following
-                // `get` operations can find the key-value pair.
-                rx.recv().unwrap()
-            })
-            .count();
-
-        info!(self.logger, "Propose 100 proposals success!");
     }
 
     pub fn propose_normal(&self, key: String, value: String) {
@@ -512,8 +498,34 @@ fn propose(raft_group: &mut RawNode<MemStorage>, proposal: &mut Proposal) {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     #[test]
-    fn test_normal_proposals() -> Result<(), ()> {
+    fn test_proposals() -> Result<(), ()> {
+        let mut raft = Raft::new(5);
+        raft.init_raft();
+
+        // Put 100 key-value pairs.
+        (0..100u16)
+            .filter(|i| {
+                let (proposal, rx) =
+                    Proposal::normal(format!("key_{}", *i).to_string(), "hello, world".to_owned());
+                raft.proposals.lock().unwrap().push_back(proposal);
+                // After we got a response from `rx`, we can assume the put succeeded and following
+                // `get` operations can find the key-value pair.
+                rx.recv().unwrap()
+            })
+            .count();
+
+        raft.terminate();
+        Ok(())
+    }
+
+    fn test_propose_normal() -> Result<(), ()> {
+        let mut raft = Raft::new(5);
+        raft.init_raft();
+
+        raft.terminate();
         Ok(())
     }
 }
