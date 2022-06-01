@@ -11,7 +11,7 @@ mod tests {
 
     // Tests whether session creation and deletion succeed
     #[tokio::test()]
-    async fn test_session_create_delete() -> Result<(), Box<(dyn Error + Send + Sync)>>{
+    async fn test_session_create_delete() -> Result<(), Box<(dyn Error + Send + Sync)>> {
         let mut client = client::ChubbyClient::new().await?;
         client.create_session(true).await?;
         client.delete_session().await?;
@@ -20,7 +20,7 @@ mod tests {
 
     // Tests whether the server is able to handle multiple sessions
     #[tokio::test()]
-    async fn test_multiple_client_create() -> Result<(), Box<(dyn Error + Send + Sync)>>{
+    async fn test_multiple_client_create() -> Result<(), Box<(dyn Error + Send + Sync)>> {
         for _ in 1..1000 {
             let mut client = client::ChubbyClient::new().await?;
             client.create_session(true).await?;
@@ -31,7 +31,7 @@ mod tests {
     // Tests whether the session times-out if a keep alive request
     // is not sent before the session lease expires
     #[tokio::test()]
-    async fn test_client_timeout() -> Result<(), Box<(dyn Error + Send + Sync)>>{
+    async fn test_client_timeout() -> Result<(), Box<(dyn Error + Send + Sync)>> {
         let mut client = client::ChubbyClient::new().await?;
         client.create_session(false).await?;
         std::thread::sleep(std::time::Duration::from_secs(13));

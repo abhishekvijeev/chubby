@@ -224,7 +224,10 @@ impl ChubbyClient {
         });
     }
 
-    pub async fn create_session(&mut self, keep_alive: bool) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    pub async fn create_session(
+        &mut self,
+        keep_alive: bool,
+    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
         println!("ChubbyClient::create_session()");
         // TODO: Check if connection is valid, else re-establish
         if let Some(session) = &*self.session.lock().await {
