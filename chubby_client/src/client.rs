@@ -1,9 +1,11 @@
 use crate::constants;
 use crate::err::ChubbyClientError;
+use chubby_server::constants::LockMode;
 use chubby_server::rpc;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
+use std::collections::HashMap;
 use std::{thread, time};
 use tokio;
 use tokio::sync::oneshot;
@@ -13,12 +15,19 @@ pub struct ChubbyClient {
     session: Arc<tokio::sync::Mutex<Option<ChubbyClientSession>>>,
 }
 
-#[derive(Debug, Clone)]
+struct Lock {
+    path: String,
+    mode: LockMode,
+    fence_token: u64,
+}
+
+// #[derive(Clone)]
 struct ChubbyClientSession {
     session_id: String,
     lease_length: Duration,
     conn: rpc::chubby_client::ChubbyClient<Channel>,
     in_jeopardy: bool,
+    locks: HashMap<String, Lock>,
 }
 
 // async fn send_keep_alive(session: &mut Option<ChubbyClientSession>) {
@@ -247,6 +256,7 @@ impl ChubbyClient {
             lease_length: Duration::from_secs(lease_length),
             conn,
             in_jeopardy: false,
+            locks: HashMap::new(),
         };
         *self.session.lock().await = Some(session);
         let shared_session = self.session.clone();
@@ -319,7 +329,47 @@ impl ChubbyClient {
         return Ok(());
     }
 
-    pub async fn acquire(&mut self, path: String) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+    pub async fn acquire(
+        &mut self,
+        path: String,
+        mode: LockMode,
+    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        println!("ChubbyClient::acquire()");
+        // TODO: Check if connection is valid, else re-establish
+        println!("\tacquiring lock");
+        let mut sess = self.session.lock().await;
+        let session_option = &mut (*sess);
+        println!("\tacquired lock");
+
+        if let Some(session) = session_option {
+            let session_id = session.session_id.clone();
+            let mut conn = session.conn.clone();
+            drop(sess);
+            let result = conn
+                .acquire(rpc::AcquireRequest {
+                    session_id: session_id,
+                    path: path.clone(),
+                    mode: mode.clone() as i32,
+                })
+                .await?;
+            let acquire_response = result.into_inner();
+            let mut sess = self.session.lock().await;
+            let session_option = &mut (*sess);
+            if let Some(session) = session_option {
+                session.locks.insert(path.clone(), Lock {
+                    path: path,
+                    mode: mode,
+                    fence_token: acquire_response.fence_token,
+                });
+            }
+            else {
+                println!("\tsession doesn't exist");
+                return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+            }
+        } else {
+            println!("\tsession doesn't exist");
+            return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+        }
         return Ok(());
     }
 

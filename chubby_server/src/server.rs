@@ -3,7 +3,9 @@ mod rpc;
 use atomic_counter::AtomicCounter;
 use atomic_counter::ConsistentCounter;
 use chubby_server::raft::Raft;
+use rpc::acquire_request::Mode;
 use rpc::chubby_server::Chubby;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::collections::HashSet;
 use std::sync::Arc;
@@ -12,17 +14,14 @@ use tokio;
 use tokio::sync::broadcast;
 use tonic::{transport::Server, Request, Response, Status};
 
-enum LockMode {
-    EXCLUSIVE,
-    SHARED,
-    FREE,
-}
-
+#[derive(Deserialize, Serialize)]
 struct Lock {
     path: String,
-    mode: LockMode,
+    mode: constants::LockMode,
     content: String,
     acquired_by: HashSet<usize>,
+    fence_token: usize,
+    ref_cnt: u64, // used only for shared locks
 }
 
 struct ChubbySession {
@@ -40,6 +39,7 @@ pub struct ChubbyServer {
     sessions: Arc<tokio::sync::Mutex<HashMap<usize, ChubbySession>>>,
     kvstore: Arc<tokio::sync::Mutex<Raft>>,
     locks: Arc<tokio::sync::Mutex<HashMap<String, Lock>>>,
+    fence_token_counter: ConsistentCounter,
 }
 
 #[tonic::async_trait]
@@ -49,8 +49,7 @@ impl Chubby for ChubbyServer {
         request: tonic::Request<rpc::CreateSessionRequest>,
     ) -> Result<tonic::Response<rpc::CreateSessionResponse>, tonic::Status> {
         println!("Received create_session request");
-        self.session_counter.inc();
-        let session_id = self.session_counter.get();
+        let session_id = self.session_counter.inc();
         let session_id_clone = session_id.clone();
         let (session_renew_sender, _) = broadcast::channel::<u32>(100);
         let (session_timeout_sender, _) = broadcast::channel::<u32>(100);
@@ -179,16 +178,21 @@ impl Chubby for ChubbyServer {
         let path = request.path;
 
         // Checks that the lock path doesn't already exist
-        // let resp = self.kvstore.lock().await.get(path.clone());
-        // if resp.is_err()
-        {
-            // self.kvstore.lock().await.set(path, "".to_string());
+        let resp = self.kvstore.lock().await.get(path.clone());
+        if resp.is_none() {
             let lock = Lock {
                 path: path.clone(),
-                mode: LockMode::FREE,
+                mode: constants::LockMode::FREE,
                 content: "".to_string(),
                 acquired_by: HashSet::new(),
+                fence_token: 0,
+                ref_cnt: 0,
             };
+            let serialized_lock = serde_json::to_string(&lock).unwrap();
+            self.kvstore
+                .lock()
+                .await
+                .propose_normal(path.clone(), serialized_lock);
             self.locks.lock().await.insert(path, lock);
         }
         Ok(Response::new(rpc::OpenResponse { expired: false }))
@@ -202,6 +206,7 @@ impl Chubby for ChubbyServer {
         let session_id = request.session_id.parse::<usize>().unwrap();
         let sessions_map = self.sessions.lock().await;
         let session = &sessions_map[&session_id];
+        let acquire_request_mode = request.mode;
 
         if session.expired {
             return Ok(Response::new(rpc::AcquireResponse {
@@ -214,11 +219,102 @@ impl Chubby for ChubbyServer {
         let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
-        Ok(Response::new(rpc::AcquireResponse {
-            expired: false,
-            acquired_lock: true,
-            fence_token: 1,
-        }))
+        let resp = self.kvstore.lock().await.get(path.clone());
+        if resp.is_none() {
+            return Err(tonic::Status::not_found(
+                "Lock not found - please open the lock file before trying to acquire the lock",
+            ));
+        }
+
+        let mut locks_map = self.locks.lock().await;
+        if !locks_map.contains_key(&path) {
+            // The KV store has the lock and the server doesn't.
+            // This is because the server recovered from a failure
+            // due to which it lost its volatile data structures.
+            // We therefore reconstruct the lock in its map.
+            let lock_str = resp.unwrap();
+            let deserialized_lock: Lock = serde_json::from_str(&lock_str).unwrap();
+            locks_map.insert(path.clone(), deserialized_lock);
+        }
+        let lock = &locks_map[&path];
+        let curr_lock_mode = lock.mode.clone();
+        drop(locks_map);
+
+        match Mode::from_i32(acquire_request_mode) {
+            Some(Mode::Exclusive) => {
+                if matches!(curr_lock_mode, constants::LockMode::EXCLUSIVE) {
+                    return Err(tonic::Status::unavailable(
+                        "Lock is currently held in EXCLUSIVE mode and therefore unavailable for acquisition in EXCLUSIVE mode",
+                    ));
+                } else if matches!(curr_lock_mode, constants::LockMode::SHARED) {
+                    return Err(tonic::Status::unavailable(
+                        "Lock is currently held in SHARED mode and therefore unavailable for acquisition in EXCLUSIVE mode",
+                    ));
+                }
+                let mut locks_map = self.locks.lock().await;
+                let lock = locks_map.get_mut(&path).unwrap();
+                let fence_token = self.fence_token_counter.inc();
+                lock.mode = constants::LockMode::EXCLUSIVE;
+                lock.fence_token = fence_token;
+                lock.acquired_by.insert(session_id);
+                let serialized_lock = serde_json::to_string(lock).unwrap();
+                self.kvstore
+                    .lock()
+                    .await
+                    .propose_normal(path.clone(), serialized_lock);
+                return Ok(Response::new(rpc::AcquireResponse {
+                    expired: false,
+                    acquired_lock: true,
+                    fence_token: fence_token as u64,
+                }));
+            }
+            Some(Mode::Shared) => {
+                if matches!(curr_lock_mode, constants::LockMode::EXCLUSIVE) {
+                    return Err(tonic::Status::unavailable(
+                        "Lock is currently held in EXCLUSIVE mode and therefore unavailable for acquisition in SHARED mode",
+                    ));
+                } else if matches!(curr_lock_mode, constants::LockMode::SHARED) {
+                    let mut locks_map = self.locks.lock().await;
+                    let lock = locks_map.get_mut(&path).unwrap();
+                    let fence_token = lock.fence_token;
+                    lock.acquired_by.insert(session_id);
+                    lock.ref_cnt += 1;
+                    let serialized_lock = serde_json::to_string(lock).unwrap();
+                    self.kvstore
+                        .lock()
+                        .await
+                        .propose_normal(path.clone(), serialized_lock);
+                    return Ok(Response::new(rpc::AcquireResponse {
+                        expired: false,
+                        acquired_lock: true,
+                        fence_token: fence_token as u64,
+                    }));
+                } else {
+                    let mut locks_map = self.locks.lock().await;
+                    let lock = locks_map.get_mut(&path).unwrap();
+                    let fence_token = self.fence_token_counter.inc();
+                    lock.mode = constants::LockMode::SHARED;
+                    lock.fence_token = fence_token;
+                    lock.acquired_by.insert(session_id);
+                    lock.ref_cnt += 1;
+                    let serialized_lock = serde_json::to_string(lock).unwrap();
+                    self.kvstore
+                        .lock()
+                        .await
+                        .propose_normal(path.clone(), serialized_lock);
+                    return Ok(Response::new(rpc::AcquireResponse {
+                        expired: false,
+                        acquired_lock: true,
+                        fence_token: fence_token as u64,
+                    }));
+                }
+            }
+            None => {
+                return Err(tonic::Status::invalid_argument(
+                    "Lock acquisition mode must be one of EXCLUSIVE or SHARED",
+                ));
+            }
+        }
     }
 
     async fn release(
@@ -311,6 +407,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         sessions: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         kvstore: Arc::new(tokio::sync::Mutex::new(raft)),
         locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+        fence_token_counter: ConsistentCounter::new(0),
     };
     println!("Server listening on {}", addr);
     Server::builder()

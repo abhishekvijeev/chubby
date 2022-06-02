@@ -1,6 +1,7 @@
 #[cfg(test)]
 mod tests {
     use super::*;
+    use chubby_server::constants::LockMode;
     use std::error::Error;
 
     #[test]
@@ -37,6 +38,16 @@ mod tests {
         std::thread::sleep(std::time::Duration::from_secs(13));
         // let resp = client.open().await?;
         // if resp doesn't say session has expired, throw error
+        Ok(())
+    }
+
+    #[tokio::test()]
+    async fn test_client_acquire_lock() -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        let mut client = client::ChubbyClient::new().await?;
+        client.create_session(false).await?;
+        let path = "/lock1";
+        client.open(String::from(path)).await?;
+        client.acquire(String::from(path), LockMode::SHARED).await?;
         Ok(())
     }
 }

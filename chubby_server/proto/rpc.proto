@@ -41,6 +41,11 @@ message OpenResponse {
 message AcquireRequest{
     string session_id = 1;
     string path = 2;
+    enum Mode {
+        EXCLUSIVE = 0;
+        SHARED = 1;
+    }
+    Mode mode = 3;
 }
 
 message AcquireResponse {

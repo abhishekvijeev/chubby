@@ -47,6 +47,17 @@ pub struct AcquireRequest {
     pub session_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
+    #[prost(enumeration = "acquire_request::Mode", tag = "3")]
+    pub mode: i32,
+}
+/// Nested message and enum types in `AcquireRequest`.
+pub mod acquire_request {
+    #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord, ::prost::Enumeration)]
+    #[repr(i32)]
+    pub enum Mode {
+        Exclusive = 0,
+        Shared = 1,
+    }
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct AcquireResponse {
