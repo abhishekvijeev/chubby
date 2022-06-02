@@ -2,10 +2,10 @@ use crate::constants;
 use crate::err::ChubbyClientError;
 use chubby_server::constants::LockMode;
 use chubby_server::rpc;
+use std::collections::HashMap;
 use std::error::Error;
 use std::sync::Arc;
 use std::time::Duration;
-use std::collections::HashMap;
 use std::{thread, time};
 use tokio;
 use tokio::sync::oneshot;
@@ -356,13 +356,24 @@ impl ChubbyClient {
             let mut sess = self.session.lock().await;
             let session_option = &mut (*sess);
             if let Some(session) = session_option {
-                session.locks.insert(path.clone(), Lock {
-                    path: path,
-                    mode: mode,
-                    fence_token: acquire_response.fence_token,
-                });
-            }
-            else {
+                if acquire_response.expired {
+                    *session_option = None;
+                    return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+                }
+                if acquire_response.acquired_lock {
+                    session.locks.insert(
+                        path.clone(),
+                        Lock {
+                            path: path,
+                            mode: mode,
+                            fence_token: acquire_response.fence_token,
+                        },
+                    );
+                } else {
+                    println!("\tunable to acquire lock");
+                    return Err(Box::new(ChubbyClientError::LockNotAcquired(path)));
+                }
+            } else {
                 println!("\tsession doesn't exist");
                 return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
             }
@@ -374,6 +385,47 @@ impl ChubbyClient {
     }
 
     pub async fn release(&mut self, path: String) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        println!("ChubbyClient::release()");
+        // TODO: Check if connection is valid, else re-establish
+        println!("\tacquiring lock");
+        let mut sess = self.session.lock().await;
+        let session_option = &mut (*sess);
+        println!("\tacquired lock");
+
+        if let Some(session) = session_option {
+            let session_id = session.session_id.clone();
+            let mut conn = session.conn.clone();
+            let lock_fence_token = session.locks[&path].fence_token;
+            drop(sess);
+            let result = conn
+                .release(rpc::ReleaseRequest {
+                    session_id: session_id,
+                    path: path.clone(),
+                    fence_token: lock_fence_token,
+                })
+                .await?;
+            let release_response = result.into_inner();
+            let mut sess = self.session.lock().await;
+            let session_option = &mut (*sess);
+            if let Some(session) = session_option {
+                if release_response.expired {
+                    *session_option = None;
+                    return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+                }
+                if release_response.released_lock {
+                    session.locks.remove(&path);
+                } else {
+                    println!("\tunable to release lock");
+                    return Err(Box::new(ChubbyClientError::LockNotReleased(path)));
+                }
+            } else {
+                println!("\tsession doesn't exist");
+                return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+            }
+        } else {
+            println!("\tsession doesn't exist");
+            return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+        }
         return Ok(());
     }
 

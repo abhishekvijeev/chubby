@@ -5,14 +5,18 @@ use std::{error::Error, fmt::Display};
 // basic error types that can occur when running the tribbler service.
 #[derive(Debug, Clone)]
 pub enum ChubbyClientError {
+    /// when a lock wasn't able to be acquired
+    LockNotAcquired(String),
+    /// when a lock wasn't able to be released
+    LockNotReleased(String),
+    /// when there are no more seq numbers to give out
+    MaxedSeq,
+    /// generic error for anything that occurs with RPC communication
+    RpcError(String),
     /// client has already established a session with the Chubby server
     SessionInProgress(String),
     /// session has not been established with the Chubby Server
     SessionDoesNotExist,
-    /// generic error for anything that occurs with RPC communication
-    RpcError(String),
-    /// when there are no more seq numbers to give out
-    MaxedSeq,
     /// catch-all error for other issues
     Unknown(String),
 }
@@ -20,14 +24,20 @@ pub enum ChubbyClientError {
 impl Display for ChubbyClientError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         let x = match self {
+            ChubbyClientError::LockNotAcquired(x) => {
+                format!("server was not able to acquire lock {}", x)
+            }
+            ChubbyClientError::LockNotReleased(x) => {
+                format!("server was not able to release lock {}", x)
+            }
+            ChubbyClientError::MaxedSeq => "server has run out of sequence numbers".to_string(),
+            ChubbyClientError::RpcError(x) => format!("rpc error: {}", x),
             ChubbyClientError::SessionInProgress(x) => {
                 format!("session with id {} is in progress", x)
             }
             ChubbyClientError::SessionDoesNotExist => {
                 "there is no currently existing session with the chubby server".to_string()
             }
-            ChubbyClientError::RpcError(x) => format!("rpc error: {}", x),
-            ChubbyClientError::MaxedSeq => "server has run out of sequence numbers".to_string(),
             x => format!("{:?}", x),
         };
         write!(f, "{}", x)

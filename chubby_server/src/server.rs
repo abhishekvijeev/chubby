@@ -20,7 +20,7 @@ struct Lock {
     mode: constants::LockMode,
     content: String,
     acquired_by: HashSet<usize>,
-    fence_token: usize,
+    fence_token: u64,
     ref_cnt: u64, // used only for shared locks
 }
 
@@ -236,9 +236,8 @@ impl Chubby for ChubbyServer {
             let deserialized_lock: Lock = serde_json::from_str(&lock_str).unwrap();
             locks_map.insert(path.clone(), deserialized_lock);
         }
-        let lock = &locks_map[&path];
+        let lock = locks_map.get_mut(&path).unwrap();
         let curr_lock_mode = lock.mode.clone();
-        drop(locks_map);
 
         match Mode::from_i32(acquire_request_mode) {
             Some(Mode::Exclusive) => {
@@ -253,11 +252,12 @@ impl Chubby for ChubbyServer {
                 }
                 let mut locks_map = self.locks.lock().await;
                 let lock = locks_map.get_mut(&path).unwrap();
-                let fence_token = self.fence_token_counter.inc();
+                let fence_token = self.fence_token_counter.inc() as u64;
                 lock.mode = constants::LockMode::EXCLUSIVE;
                 lock.fence_token = fence_token;
                 lock.acquired_by.insert(session_id);
                 let serialized_lock = serde_json::to_string(lock).unwrap();
+                drop(locks_map);
                 self.kvstore
                     .lock()
                     .await
@@ -280,6 +280,7 @@ impl Chubby for ChubbyServer {
                     lock.acquired_by.insert(session_id);
                     lock.ref_cnt += 1;
                     let serialized_lock = serde_json::to_string(lock).unwrap();
+                    drop(locks_map);
                     self.kvstore
                         .lock()
                         .await
@@ -292,12 +293,13 @@ impl Chubby for ChubbyServer {
                 } else {
                     let mut locks_map = self.locks.lock().await;
                     let lock = locks_map.get_mut(&path).unwrap();
-                    let fence_token = self.fence_token_counter.inc();
+                    let fence_token = self.fence_token_counter.inc() as u64;
                     lock.mode = constants::LockMode::SHARED;
                     lock.fence_token = fence_token;
                     lock.acquired_by.insert(session_id);
                     lock.ref_cnt += 1;
                     let serialized_lock = serde_json::to_string(lock).unwrap();
+                    drop(locks_map);
                     self.kvstore
                         .lock()
                         .await
@@ -335,6 +337,68 @@ impl Chubby for ChubbyServer {
 
         let path = request.path;
         // TODO: Validate path and return error for invalid paths
+
+        let resp = self.kvstore.lock().await.get(path.clone());
+        if resp.is_none() {
+            return Err(tonic::Status::not_found(
+                "Lock not found - please open and acquire the lock file before trying to release the lock",
+            ));
+        }
+
+        let mut locks_map = self.locks.lock().await;
+        if !locks_map.contains_key(&path) {
+            // The KV store has the lock and the server doesn't.
+            // This is because the server recovered from a failure
+            // due to which it lost its volatile data structures.
+            // We therefore reconstruct the lock in its map.
+            let lock_str = resp.unwrap();
+            let deserialized_lock: Lock = serde_json::from_str(&lock_str).unwrap();
+            locks_map.insert(path.clone(), deserialized_lock);
+        }
+        let lock = locks_map.get_mut(&path).unwrap();
+        let curr_lock_mode = lock.mode.clone();
+        if !lock.acquired_by.contains(&session_id) {
+            return Err(tonic::Status::failed_precondition(
+                "Lock must be acquired before attempting to release it",
+            ));
+        }
+
+        // Check fence token
+        if lock.fence_token != request.fence_token {
+            return Err(tonic::Status::invalid_argument(
+                "Lock's fence token doesn't match the request's fence token - please reaquire the lock",
+            ));
+        }
+
+        match curr_lock_mode {
+            constants::LockMode::EXCLUSIVE => {
+                lock.mode = constants::LockMode::FREE;
+                let serialized_lock = serde_json::to_string(lock).unwrap();
+                drop(locks_map);
+                self.kvstore
+                    .lock()
+                    .await
+                    .propose_normal(path.clone(), serialized_lock);
+            }
+            constants::LockMode::SHARED => {
+                lock.ref_cnt -= 1;
+                lock.acquired_by.remove(&session_id);
+                if lock.ref_cnt == 0 {
+                    lock.mode = constants::LockMode::FREE;
+                }
+                let serialized_lock = serde_json::to_string(lock).unwrap();
+                drop(locks_map);
+                self.kvstore
+                    .lock()
+                    .await
+                    .propose_normal(path.clone(), serialized_lock);
+            }
+            constants::LockMode::FREE => {
+                return Err(tonic::Status::failed_precondition(
+                    "Lock must be acquired before attempting to release it",
+                ));
+            }
+        }
 
         Ok(Response::new(rpc::ReleaseResponse {
             expired: false,
