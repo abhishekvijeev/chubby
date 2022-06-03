@@ -363,13 +363,6 @@ impl Chubby for ChubbyServer {
             ));
         }
 
-        // Check fence token
-        if lock.fence_token != request.fence_token {
-            return Err(tonic::Status::invalid_argument(
-                "Lock's fence token doesn't match the request's fence token - please reaquire the lock",
-            ));
-        }
-
         match curr_lock_mode {
             constants::LockMode::EXCLUSIVE => {
                 lock.mode = constants::LockMode::FREE;
@@ -418,7 +411,6 @@ impl Chubby for ChubbyServer {
         if session.expired {
             return Ok(Response::new(rpc::GetContentsResponse {
                 expired: true,
-                get_contents_status: false,
                 contents: String::from(""),
             }));
         }
@@ -426,11 +418,50 @@ impl Chubby for ChubbyServer {
         let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
-        Ok(Response::new(rpc::GetContentsResponse {
-            expired: false,
-            get_contents_status: true,
-            contents: String::from(""),
-        }))
+        let resp = self.kvstore.lock().await.get(path.clone());
+        if resp.is_none() {
+            return Err(tonic::Status::not_found(
+                "Lock not found - please open and acquire the lock file before trying to get contents",
+            ));
+        }
+
+        let mut locks_map = self.locks.lock().await;
+        if !locks_map.contains_key(&path) {
+            // The KV store has the lock and the server doesn't.
+            // This is because the server recovered from a failure
+            // due to which it lost its volatile data structures.
+            // We therefore reconstruct the lock in its map.
+            let lock_str = resp.unwrap();
+            let deserialized_lock: Lock = serde_json::from_str(&lock_str).unwrap();
+            locks_map.insert(path.clone(), deserialized_lock);
+        }
+        let lock = locks_map.get_mut(&path).unwrap();
+        let curr_lock_mode = lock.mode.clone();
+        if !lock.acquired_by.contains(&session_id) {
+            return Err(tonic::Status::failed_precondition(
+                "Lock must be acquired before attempting to get contents",
+            ));
+        }
+
+        match curr_lock_mode {
+            constants::LockMode::EXCLUSIVE => {
+                return Ok(Response::new(rpc::GetContentsResponse {
+                    expired: false,
+                    contents: lock.content.clone(),
+                }));
+            }
+            constants::LockMode::SHARED => {
+                return Ok(Response::new(rpc::GetContentsResponse {
+                    expired: false,
+                    contents: lock.content.clone(),
+                }));
+            }
+            constants::LockMode::FREE => {
+                return Err(tonic::Status::failed_precondition(
+                    "Lock must be acquired before attempting to get contents",
+                ));
+            }
+        }
     }
 
     async fn set_contents(
@@ -441,21 +472,62 @@ impl Chubby for ChubbyServer {
         let session_id = request.session_id.parse::<usize>().unwrap();
         let sessions_map = self.sessions.lock().await;
         let session = &sessions_map[&session_id];
+        let content = request.contents;
 
         if session.expired {
-            return Ok(Response::new(rpc::SetContentsResponse {
-                expired: true,
-                set_contents_status: false,
-            }));
+            return Ok(Response::new(rpc::SetContentsResponse { expired: true }));
         }
 
         let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
-        Ok(Response::new(rpc::SetContentsResponse {
-            expired: false,
-            set_contents_status: true,
-        }))
+        let resp = self.kvstore.lock().await.get(path.clone());
+        if resp.is_none() {
+            return Err(tonic::Status::not_found(
+                "Lock not found - please open and acquire the lock file before trying to set contents",
+            ));
+        }
+
+        let mut locks_map = self.locks.lock().await;
+        if !locks_map.contains_key(&path) {
+            // The KV store has the lock and the server doesn't.
+            // This is because the server recovered from a failure
+            // due to which it lost its volatile data structures.
+            // We therefore reconstruct the lock in its map.
+            let lock_str = resp.unwrap();
+            let deserialized_lock: Lock = serde_json::from_str(&lock_str).unwrap();
+            locks_map.insert(path.clone(), deserialized_lock);
+        }
+        let lock = locks_map.get_mut(&path).unwrap();
+        let curr_lock_mode = lock.mode.clone();
+        if !lock.acquired_by.contains(&session_id) {
+            return Err(tonic::Status::failed_precondition(
+                "Lock must be acquired before attempting to set contents",
+            ));
+        }
+
+        match curr_lock_mode {
+            constants::LockMode::EXCLUSIVE => {
+                lock.content = content;
+                let serialized_lock = serde_json::to_string(lock).unwrap();
+                drop(locks_map);
+                self.kvstore
+                    .lock()
+                    .await
+                    .propose_normal(path.clone(), serialized_lock);
+                return Ok(Response::new(rpc::SetContentsResponse { expired: false }));
+            }
+            constants::LockMode::SHARED => {
+                return Err(tonic::Status::failed_precondition(
+                    "Lock must be acquired in EXCLUSIVE mode before attempting to set contents",
+                ));
+            }
+            constants::LockMode::FREE => {
+                return Err(tonic::Status::failed_precondition(
+                    "Lock must be acquired in EXCLUSIVE mode before attempting to set contents",
+                ));
+            }
+        }
     }
 }
 

@@ -57,7 +57,6 @@ message AcquireResponse {
 message ReleaseRequest{
     string session_id = 1;
     string path = 2;
-    uint64 fence_token = 3;
 }
 
 message ReleaseResponse {
@@ -72,20 +71,17 @@ message GetContentsRequest {
 
 message GetContentsResponse {
     bool expired = 1;
-    bool get_contents_status = 2;
-    string contents = 3;
+    string contents = 2;
 }
 
 message SetContentsRequest {
     string session_id = 1;
     string path = 2;
-    uint64 fence_token = 3;
     string contents = 4;
 }
 
 message SetContentsResponse {
     bool expired = 1;
-    bool set_contents_status = 2;
 }
   
 service chubby {

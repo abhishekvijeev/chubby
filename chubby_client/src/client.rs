@@ -395,13 +395,11 @@ impl ChubbyClient {
         if let Some(session) = session_option {
             let session_id = session.session_id.clone();
             let mut conn = session.conn.clone();
-            let lock_fence_token = session.locks[&path].fence_token;
             drop(sess);
             let result = conn
                 .release(rpc::ReleaseRequest {
                     session_id: session_id,
                     path: path.clone(),
-                    fence_token: lock_fence_token,
                 })
                 .await?;
             let release_response = result.into_inner();
@@ -409,6 +407,7 @@ impl ChubbyClient {
             let session_option = &mut (*sess);
             if let Some(session) = session_option {
                 if release_response.expired {
+                    println!("\tsession doesn't exist");
                     *session_option = None;
                     return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
                 }
@@ -432,8 +431,43 @@ impl ChubbyClient {
     pub async fn get_contents(
         &mut self,
         path: String,
-    ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
-        return Ok(());
+    ) -> Result<String, Box<(dyn Error + Send + Sync)>> {
+        println!("ChubbyClient::get_contents()");
+        // TODO: Check if connection is valid, else re-establish
+        println!("\tacquiring lock");
+        let mut sess = self.session.lock().await;
+        let session_option = &mut (*sess);
+        println!("\tacquired lock");
+
+        if let Some(session) = session_option {
+            let session_id = session.session_id.clone();
+            let mut conn = session.conn.clone();
+            drop(sess);
+            let result = conn
+                .get_contents(rpc::GetContentsRequest {
+                    session_id: session_id,
+                    path: path.clone(),
+                })
+                .await?;
+            let get_contents_response = result.into_inner();
+            let mut sess = self.session.lock().await;
+            let session_option = &mut (*sess);
+            if session_option.is_some() {
+                if get_contents_response.expired {
+                    println!("\tsession doesn't exist");
+                    *session_option = None;
+                    return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+                }
+                println!("\tsuccessfully got contents: {}", get_contents_response.contents);
+                return Ok(get_contents_response.contents);
+            } else {
+                println!("\tsession doesn't exist");
+                return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+            }
+        } else {
+            println!("\tsession doesn't exist");
+            return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+        }
     }
 
     pub async fn set_contents(
@@ -441,6 +475,42 @@ impl ChubbyClient {
         path: String,
         contents: String,
     ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
+        println!("ChubbyClient::set_contents()");
+        // TODO: Check if connection is valid, else re-establish
+        println!("\tacquiring lock");
+        let mut sess = self.session.lock().await;
+        let session_option = &mut (*sess);
+        println!("\tacquired lock");
+
+        if let Some(session) = session_option {
+            let session_id = session.session_id.clone();
+            let mut conn = session.conn.clone();
+            drop(sess);
+            let result = conn
+                .set_contents(rpc::SetContentsRequest {
+                    session_id: session_id,
+                    path: path.clone(),
+                    contents: contents,
+                })
+                .await?;
+            let set_contents_response = result.into_inner();
+            let mut sess = self.session.lock().await;
+            let session_option = &mut (*sess);
+            if session_option.is_some() {
+                if set_contents_response.expired {
+                    println!("\tsession doesn't exist");
+                    *session_option = None;
+                    return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+                }
+            } else {
+                println!("\tsession doesn't exist");
+                return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+            }
+        } else {
+            println!("\tsession doesn't exist");
+            return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
+        }
+        println!("\tsuccessfully set contents");
         return Ok(());
     }
 }

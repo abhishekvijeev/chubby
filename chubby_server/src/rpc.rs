@@ -74,8 +74,6 @@ pub struct ReleaseRequest {
     pub session_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "3")]
-    pub fence_token: u64,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
 pub struct ReleaseResponse {
@@ -96,9 +94,7 @@ pub struct GetContentsRequest {
 pub struct GetContentsResponse {
     #[prost(bool, tag = "1")]
     pub expired: bool,
-    #[prost(bool, tag = "2")]
-    pub get_contents_status: bool,
-    #[prost(string, tag = "3")]
+    #[prost(string, tag = "2")]
     pub contents: ::prost::alloc::string::String,
 }
 #[derive(Clone, PartialEq, ::prost::Message)]
@@ -107,8 +103,6 @@ pub struct SetContentsRequest {
     pub session_id: ::prost::alloc::string::String,
     #[prost(string, tag = "2")]
     pub path: ::prost::alloc::string::String,
-    #[prost(uint64, tag = "3")]
-    pub fence_token: u64,
     #[prost(string, tag = "4")]
     pub contents: ::prost::alloc::string::String,
 }
@@ -116,8 +110,6 @@ pub struct SetContentsRequest {
 pub struct SetContentsResponse {
     #[prost(bool, tag = "1")]
     pub expired: bool,
-    #[prost(bool, tag = "2")]
-    pub set_contents_status: bool,
 }
 #[doc = r" Generated client implementations."]
 pub mod chubby_client {
