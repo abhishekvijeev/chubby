@@ -178,7 +178,9 @@ impl Chubby for ChubbyServer {
         let path = request.path;
 
         // Checks that the lock path doesn't already exist
-        let resp = self.kvstore.lock().await.get(path.clone());
+        let mut kvstore = self.kvstore.lock().await;
+        let resp = kvstore.get(path.clone());
+        drop(kvstore);
         if resp.is_none() {
             let lock = Lock {
                 path: path.clone(),
@@ -189,10 +191,9 @@ impl Chubby for ChubbyServer {
                 ref_cnt: 0,
             };
             let serialized_lock = serde_json::to_string(&lock).unwrap();
-            self.kvstore
-                .lock()
-                .await
-                .propose_normal(path.clone(), serialized_lock);
+            let kvstore = self.kvstore.lock().await;
+            kvstore.propose_normal(path.clone(), serialized_lock);
+            drop(kvstore);
             self.locks.lock().await.insert(path, lock);
         }
         Ok(Response::new(rpc::OpenResponse { expired: false }))
@@ -219,7 +220,9 @@ impl Chubby for ChubbyServer {
         let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
-        let resp = self.kvstore.lock().await.get(path.clone());
+        let mut kvstore = self.kvstore.lock().await;
+        let resp = kvstore.get(path.clone());
+        drop(kvstore);
         if resp.is_none() {
             return Err(tonic::Status::not_found(
                 "Lock not found - please open the lock file before trying to acquire the lock",
@@ -258,10 +261,9 @@ impl Chubby for ChubbyServer {
                 lock.acquired_by.insert(session_id);
                 let serialized_lock = serde_json::to_string(lock).unwrap();
                 drop(locks_map);
-                self.kvstore
-                    .lock()
-                    .await
-                    .propose_normal(path.clone(), serialized_lock);
+                let kvstore = self.kvstore.lock().await;
+                kvstore.propose_normal(path.clone(), serialized_lock);
+                drop(kvstore);
                 return Ok(Response::new(rpc::AcquireResponse {
                     expired: false,
                     acquired_lock: true,
@@ -281,10 +283,9 @@ impl Chubby for ChubbyServer {
                     lock.ref_cnt += 1;
                     let serialized_lock = serde_json::to_string(lock).unwrap();
                     drop(locks_map);
-                    self.kvstore
-                        .lock()
-                        .await
-                        .propose_normal(path.clone(), serialized_lock);
+                    let kvstore = self.kvstore.lock().await;
+                    kvstore.propose_normal(path.clone(), serialized_lock);
+                    drop(kvstore);
                     return Ok(Response::new(rpc::AcquireResponse {
                         expired: false,
                         acquired_lock: true,
@@ -300,10 +301,9 @@ impl Chubby for ChubbyServer {
                     lock.ref_cnt += 1;
                     let serialized_lock = serde_json::to_string(lock).unwrap();
                     drop(locks_map);
-                    self.kvstore
-                        .lock()
-                        .await
-                        .propose_normal(path.clone(), serialized_lock);
+                    let kvstore = self.kvstore.lock().await;
+                    kvstore.propose_normal(path.clone(), serialized_lock);
+                    drop(kvstore);
                     return Ok(Response::new(rpc::AcquireResponse {
                         expired: false,
                         acquired_lock: true,
@@ -337,8 +337,9 @@ impl Chubby for ChubbyServer {
 
         let path = request.path;
         // TODO: Validate path and return error for invalid paths
-
-        let resp = self.kvstore.lock().await.get(path.clone());
+        let mut kvstore = self.kvstore.lock().await;
+        let resp = kvstore.get(path.clone());
+        drop(kvstore);
         if resp.is_none() {
             return Err(tonic::Status::not_found(
                 "Lock not found - please open and acquire the lock file before trying to release the lock",
@@ -368,10 +369,9 @@ impl Chubby for ChubbyServer {
                 lock.mode = constants::LockMode::FREE;
                 let serialized_lock = serde_json::to_string(lock).unwrap();
                 drop(locks_map);
-                self.kvstore
-                    .lock()
-                    .await
-                    .propose_normal(path.clone(), serialized_lock);
+                let kvstore = self.kvstore.lock().await;
+                kvstore.propose_normal(path.clone(), serialized_lock);
+                drop(kvstore);
             }
             constants::LockMode::SHARED => {
                 lock.ref_cnt -= 1;
@@ -381,10 +381,9 @@ impl Chubby for ChubbyServer {
                 }
                 let serialized_lock = serde_json::to_string(lock).unwrap();
                 drop(locks_map);
-                self.kvstore
-                    .lock()
-                    .await
-                    .propose_normal(path.clone(), serialized_lock);
+                let kvstore = self.kvstore.lock().await;
+                kvstore.propose_normal(path.clone(), serialized_lock);
+                drop(kvstore);
             }
             constants::LockMode::FREE => {
                 return Err(tonic::Status::failed_precondition(
@@ -418,7 +417,9 @@ impl Chubby for ChubbyServer {
         let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
-        let resp = self.kvstore.lock().await.get(path.clone());
+        let mut kvstore = self.kvstore.lock().await;
+        let resp = kvstore.get(path.clone());
+        drop(kvstore);
         if resp.is_none() {
             return Err(tonic::Status::not_found(
                 "Lock not found - please open and acquire the lock file before trying to get contents",
@@ -481,7 +482,9 @@ impl Chubby for ChubbyServer {
         let path = request.path;
         // TODO: Validate path and return error for invalid paths
 
-        let resp = self.kvstore.lock().await.get(path.clone());
+        let mut kvstore = self.kvstore.lock().await;
+        let resp = kvstore.get(path.clone());
+        drop(kvstore);
         if resp.is_none() {
             return Err(tonic::Status::not_found(
                 "Lock not found - please open and acquire the lock file before trying to set contents",
@@ -511,10 +514,9 @@ impl Chubby for ChubbyServer {
                 lock.content = content;
                 let serialized_lock = serde_json::to_string(lock).unwrap();
                 drop(locks_map);
-                self.kvstore
-                    .lock()
-                    .await
-                    .propose_normal(path.clone(), serialized_lock);
+                let kvstore = self.kvstore.lock().await;
+                kvstore.propose_normal(path.clone(), serialized_lock);
+                drop(kvstore);
                 return Ok(Response::new(rpc::SetContentsResponse { expired: false }));
             }
             constants::LockMode::SHARED => {
