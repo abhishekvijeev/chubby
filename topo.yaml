@@ -1,0 +1,3 @@
+[replication]
+max-replicas = 3
+location-labels = ["zone", "rack", "host"]
