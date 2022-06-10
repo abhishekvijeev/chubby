@@ -101,6 +101,7 @@ impl Chubby for ChubbyServer {
             }
         });
 
+        println!("\tresponding ok");
         Ok(Response::new(rpc::CreateSessionResponse {
             session_id: session_id.to_string(),
             lease_length: constants::LEASE_EXTENSION.as_secs(),
@@ -195,9 +196,14 @@ impl Chubby for ChubbyServer {
                 };
                 let serialized_lock = serde_json::to_string(&lock).unwrap();
                 let kvstore = self.kvstore.lock().await;
-                kvstore.put(path.clone(), serialized_lock).await;
+                let resp = kvstore.put(path.clone(), serialized_lock).await;
                 drop(kvstore);
                 self.locks.lock().await.insert(path, lock);
+                if let Ok(resp) = resp {
+                    println!("response ok");
+                } else {
+                    println!("response not ok");
+                }
             }
             Ok(Response::new(rpc::OpenResponse { expired: false }))
         } else {
@@ -209,6 +215,7 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::AcquireRequest>,
     ) -> Result<tonic::Response<rpc::AcquireResponse>, tonic::Status> {
+        println!("Received acquire request");
         let request = request.into_inner();
         let session_id = request.session_id.parse::<usize>().unwrap();
         let sessions_map = self.sessions.lock().await;
@@ -216,6 +223,7 @@ impl Chubby for ChubbyServer {
         let acquire_request_mode = request.mode;
 
         if session.expired {
+            println!("\tsession expired");
             return Ok(Response::new(rpc::AcquireResponse {
                 expired: true,
                 acquired_lock: false,
@@ -250,6 +258,7 @@ impl Chubby for ChubbyServer {
             }
             let lock = locks_map.get_mut(&path).unwrap();
             let curr_lock_mode = lock.mode.clone();
+            drop(locks_map);
 
             match Mode::from_i32(acquire_request_mode) {
                 Some(Mode::Exclusive) => {
@@ -290,6 +299,7 @@ impl Chubby for ChubbyServer {
                         let fence_token = lock.fence_token;
                         lock.acquired_by.insert(session_id);
                         lock.ref_cnt += 1;
+                        println!("\ref_cnt is now {}", lock.ref_cnt);
                         let serialized_lock = serde_json::to_string(lock).unwrap();
                         drop(locks_map);
                         let kvstore = self.kvstore.lock().await;
@@ -308,6 +318,7 @@ impl Chubby for ChubbyServer {
                         lock.fence_token = fence_token;
                         lock.acquired_by.insert(session_id);
                         lock.ref_cnt += 1;
+                        println!("\ref_cnt is now {}", lock.ref_cnt);
                         let serialized_lock = serde_json::to_string(lock).unwrap();
                         drop(locks_map);
                         let kvstore = self.kvstore.lock().await;
@@ -335,6 +346,7 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::ReleaseRequest>,
     ) -> Result<tonic::Response<rpc::ReleaseResponse>, tonic::Status> {
+        println!("Received release request");
         let request = request.into_inner();
         let session_id = request.session_id.parse::<usize>().unwrap();
         let sessions_map = self.sessions.lock().await;
@@ -372,6 +384,7 @@ impl Chubby for ChubbyServer {
                 locks_map.insert(path.clone(), deserialized_lock);
             }
             let lock = locks_map.get_mut(&path).unwrap();
+
             let curr_lock_mode = lock.mode.clone();
             if !lock.acquired_by.contains(&session_id) {
                 return Err(tonic::Status::failed_precondition(
@@ -381,6 +394,7 @@ impl Chubby for ChubbyServer {
 
             match curr_lock_mode {
                 constants::LockMode::EXCLUSIVE => {
+                    println!("\tsetting lock to free from exclusive");
                     lock.mode = constants::LockMode::FREE;
                     let serialized_lock = serde_json::to_string(lock).unwrap();
                     drop(locks_map);
@@ -389,9 +403,12 @@ impl Chubby for ChubbyServer {
                     drop(kvstore);
                 }
                 constants::LockMode::SHARED => {
+                    println!("\tdecrementing ref_cnt");
                     lock.ref_cnt -= 1;
+                    println!("\ref_cnt is now {}", lock.ref_cnt);
                     lock.acquired_by.remove(&session_id);
                     if lock.ref_cnt == 0 {
+                        println!("\tsetting lock to free from shared");
                         lock.mode = constants::LockMode::FREE;
                     }
                     let serialized_lock = serde_json::to_string(lock).unwrap();

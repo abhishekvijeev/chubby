@@ -47,10 +47,14 @@ mod tests {
     #[tokio::test()]
     async fn test_client_acquire_lock() -> Result<(), Box<(dyn Error + Send + Sync)>> {
         let mut client = client::ChubbyClient::new().await?;
-        client.create_session(false).await?;
+        client.create_session(true).await?;
         let path = "/lock1";
+        println!("sending open");
         client.open(String::from(path)).await?;
         client.acquire(String::from(path), LockMode::SHARED).await?;
+        client.release(String::from(path)).await?;
+        client.acquire(String::from(path), LockMode::EXCLUSIVE).await?;
+        client.release(String::from(path)).await?;
         Ok(())
     }
 
