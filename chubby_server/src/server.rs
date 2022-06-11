@@ -146,7 +146,53 @@ impl Chubby for ChubbyServer {
         tokio::select! {
             v = timeout_receiver.recv() => {
                 println!("session {} has timed-out", session_id);
-                // TODO: self.release_locks(session_id);
+                let mut keys = Vec::new();
+                let mut locks_map = self.locks.lock().await;
+
+                for (path, _) in &*locks_map {
+                    keys.push(path.clone());
+                }
+                drop(locks_map);
+
+                for path in keys {
+                    let mut locks_map = self.locks.lock().await;
+                    let lock = locks_map.
+                    get_mut(&path).unwrap();
+                    if lock.acquired_by.contains(&session_id) {
+                        let curr_lock_mode = lock.mode.clone();
+                        match curr_lock_mode {
+                            constants::LockMode::EXCLUSIVE => {
+                                println!("\tsetting lock to free from exclusive");
+                                lock.mode = constants::LockMode::FREE;
+                                let serialized_lock = serde_json::to_string(lock).unwrap();
+                                drop(locks_map);
+                                let kvstore = self.kvstore.lock().await;
+                                kvstore.put(path.clone(), serialized_lock).await;
+                                drop(kvstore);
+                            }
+                            constants::LockMode::SHARED => {
+                                println!("\tdecrementing ref_cnt");
+                                lock.ref_cnt -= 1;
+                                println!("\ref_cnt is now {}", lock.ref_cnt);
+                                lock.acquired_by.remove(&session_id);
+                                if lock.ref_cnt == 0 {
+                                    println!("\tsetting lock to free from shared");
+                                    lock.mode = constants::LockMode::FREE;
+                                }
+                                let serialized_lock = serde_json::to_string(lock).unwrap();
+                                drop(locks_map);
+                                let kvstore = self.kvstore.lock().await;
+                                kvstore.put(path.clone(), serialized_lock).await;
+                                drop(kvstore);
+                            }
+                            constants::LockMode::FREE => {
+                                return Err(tonic::Status::failed_precondition(
+                                    "Lock must be acquired before attempting to release it",
+                                ));
+                            }
+                        }
+                    }
+                }
                 return Ok(Response::new(rpc::KeepAliveResponse { expired: true, lease_length: constants::LEASE_EXTENSION.as_secs() }));
             }
             v = renew_receiver.recv() => {
