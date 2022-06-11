@@ -69,11 +69,11 @@ mod tests {
         let mut clients = Vec::new();
         let mut lock_paths = Vec::new();
         let mut thread_handles = Vec::new();
-        let num_locks = 10;
+        let num_locks = 3000;
 
         for i in 1..num_locks {
             let mut client = client::ChubbyClient::new().await?;
-            let path = format!("{}{}", "/lock/", i);
+            let path = format!("{}{}", "/lock/n", i);
             client.create_session(true).await?;
             client.open(path.clone()).await?;
             clients.push(Arc::new(Mutex::new(client)));

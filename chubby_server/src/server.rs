@@ -49,7 +49,7 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::CreateSessionRequest>,
     ) -> Result<tonic::Response<rpc::CreateSessionResponse>, tonic::Status> {
-        println!("Received create_session request");
+        // println!("Received create_session request");
         let session_id = self.session_counter.inc();
         let session_id_clone = session_id.clone();
         let (session_renew_sender, _) = broadcast::channel::<u32>(100);
@@ -72,18 +72,18 @@ impl Chubby for ChubbyServer {
                 let mut sessions_map = shared_session.lock().await;
                 let session_option = sessions_map.get_mut(&session_id);
                 if let Some(session) = session_option {
-                    // println!(
+                    // // println!(
                     //     "Session {} time elapsed: {:?}, lease length: {:?}",
                     //     session_id,
                     //     session.start_time.elapsed(),
                     //     session.lease_length
                     // );
                     if session.start_time.elapsed() > session.lease_length {
-                        println!("Session ID {}'s lease has expired", session_id_clone);
+                        // println!("Session ID {}'s lease has expired", session_id_clone);
                         session.expired = true;
                         let r = session.session_timeout_sender.send(1);
                         if r.is_err() {
-                            println!("Could not send message to timeout channel");
+                            // println!("Could not send message to timeout channel");
                         }
                         return;
                     } else if (session.start_time + session.lease_length)
@@ -101,7 +101,7 @@ impl Chubby for ChubbyServer {
             }
         });
 
-        println!("\tresponding ok");
+        // println!("\tresponding ok");
         Ok(Response::new(rpc::CreateSessionResponse {
             session_id: session_id.to_string(),
             lease_length: constants::LEASE_EXTENSION.as_secs(),
@@ -112,7 +112,7 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::DeleteSessionRequest>,
     ) -> Result<tonic::Response<rpc::DeleteSessionResponse>, tonic::Status> {
-        println!("Received delete_session request");
+        // println!("Received delete_session request");
         let session_id = request.into_inner().session_id.parse::<usize>().unwrap();
         let mut sessions_map = self.sessions.lock().await;
         let session_option = sessions_map.get_mut(&session_id);
@@ -127,7 +127,7 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::KeepAliveRequest>,
     ) -> Result<tonic::Response<rpc::KeepAliveResponse>, tonic::Status> {
-        println!("Received keep_alive request");
+        // println!("Received keep_alive request");
         let session_id = request.into_inner().session_id.parse::<usize>().unwrap();
         let sessions_map = self.sessions.lock().await;
         let session = &sessions_map[&session_id];
@@ -145,7 +145,7 @@ impl Chubby for ChubbyServer {
         drop(sessions_map);
         tokio::select! {
             v = timeout_receiver.recv() => {
-                println!("session {} has timed-out", session_id);
+                // println!("session {} has timed-out", session_id);
                 let mut keys = Vec::new();
                 let mut locks_map = self.locks.lock().await;
 
@@ -162,7 +162,7 @@ impl Chubby for ChubbyServer {
                         let curr_lock_mode = lock.mode.clone();
                         match curr_lock_mode {
                             constants::LockMode::EXCLUSIVE => {
-                                println!("\tsetting lock to free from exclusive");
+                                // println!("\tsetting lock to free from exclusive");
                                 lock.mode = constants::LockMode::FREE;
                                 let serialized_lock = serde_json::to_string(lock).unwrap();
                                 drop(locks_map);
@@ -171,12 +171,12 @@ impl Chubby for ChubbyServer {
                                 drop(kvstore);
                             }
                             constants::LockMode::SHARED => {
-                                println!("\tdecrementing ref_cnt");
+                                // println!("\tdecrementing ref_cnt");
                                 lock.ref_cnt -= 1;
-                                println!("\ref_cnt is now {}", lock.ref_cnt);
+                                // println!("\ref_cnt is now {}", lock.ref_cnt);
                                 lock.acquired_by.remove(&session_id);
                                 if lock.ref_cnt == 0 {
-                                    println!("\tsetting lock to free from shared");
+                                    // println!("\tsetting lock to free from shared");
                                     lock.mode = constants::LockMode::FREE;
                                 }
                                 let serialized_lock = serde_json::to_string(lock).unwrap();
@@ -196,7 +196,7 @@ impl Chubby for ChubbyServer {
                 return Ok(Response::new(rpc::KeepAliveResponse { expired: true, lease_length: constants::LEASE_EXTENSION.as_secs() }));
             }
             v = renew_receiver.recv() => {
-                println!("session {}'s lease is being renewed by {}s", session_id, constants::LEASE_EXTENSION.as_secs());
+                // println!("session {}'s lease is being renewed by {}s", session_id, constants::LEASE_EXTENSION.as_secs());
                 let mut sessions_map = self.sessions.lock().await;
                 let session_option = sessions_map.get_mut(&session_id);
                 if let Some(session) = session_option {
@@ -246,9 +246,9 @@ impl Chubby for ChubbyServer {
                 drop(kvstore);
                 self.locks.lock().await.insert(path, lock);
                 if let Ok(resp) = resp {
-                    println!("response ok");
+                    // println!("response ok");
                 } else {
-                    println!("response not ok");
+                    // println!("response not ok");
                 }
             }
             Ok(Response::new(rpc::OpenResponse { expired: false }))
@@ -269,7 +269,7 @@ impl Chubby for ChubbyServer {
         let acquire_request_mode = request.mode;
 
         if session.expired {
-            println!("\tsession expired");
+            // println!("\tsession expired");
             return Ok(Response::new(rpc::AcquireResponse {
                 expired: true,
                 acquired_lock: false,
@@ -279,6 +279,8 @@ impl Chubby for ChubbyServer {
 
         let path = request.path;
         // TODO: Validate path and return error for invalid paths
+
+        let begin = Instant::now();
 
         let mut kvstore = self.kvstore.lock().await;
         let resp = kvstore.get(path.clone()).await;
@@ -328,6 +330,8 @@ impl Chubby for ChubbyServer {
                     let kvstore = self.kvstore.lock().await;
                     kvstore.put(path.clone(), serialized_lock).await;
                     drop(kvstore);
+                    let t = begin.elapsed();
+                    println!("\ttime: {}", t.as_millis());
                     return Ok(Response::new(rpc::AcquireResponse {
                         expired: false,
                         acquired_lock: true,
@@ -345,7 +349,7 @@ impl Chubby for ChubbyServer {
                         let fence_token = lock.fence_token;
                         lock.acquired_by.insert(session_id);
                         lock.ref_cnt += 1;
-                        println!("\ref_cnt is now {}", lock.ref_cnt);
+                        // println!("\ref_cnt is now {}", lock.ref_cnt);
                         let serialized_lock = serde_json::to_string(lock).unwrap();
                         drop(locks_map);
                         let kvstore = self.kvstore.lock().await;
@@ -364,7 +368,7 @@ impl Chubby for ChubbyServer {
                         lock.fence_token = fence_token;
                         lock.acquired_by.insert(session_id);
                         lock.ref_cnt += 1;
-                        println!("\ref_cnt is now {}", lock.ref_cnt);
+                        // println!("\ref_cnt is now {}", lock.ref_cnt);
                         let serialized_lock = serde_json::to_string(lock).unwrap();
                         drop(locks_map);
                         let kvstore = self.kvstore.lock().await;
@@ -392,7 +396,7 @@ impl Chubby for ChubbyServer {
         &self,
         request: tonic::Request<rpc::ReleaseRequest>,
     ) -> Result<tonic::Response<rpc::ReleaseResponse>, tonic::Status> {
-        println!("Received release request");
+        // println!("Received release request");
         let request = request.into_inner();
         let session_id = request.session_id.parse::<usize>().unwrap();
         let sessions_map = self.sessions.lock().await;
@@ -440,7 +444,7 @@ impl Chubby for ChubbyServer {
 
             match curr_lock_mode {
                 constants::LockMode::EXCLUSIVE => {
-                    println!("\tsetting lock to free from exclusive");
+                    // println!("\tsetting lock to free from exclusive");
                     lock.mode = constants::LockMode::FREE;
                     let serialized_lock = serde_json::to_string(lock).unwrap();
                     drop(locks_map);
@@ -449,12 +453,12 @@ impl Chubby for ChubbyServer {
                     drop(kvstore);
                 }
                 constants::LockMode::SHARED => {
-                    println!("\tdecrementing ref_cnt");
+                    // println!("\tdecrementing ref_cnt");
                     lock.ref_cnt -= 1;
-                    println!("\ref_cnt is now {}", lock.ref_cnt);
+                    // println!("\ref_cnt is now {}", lock.ref_cnt);
                     lock.acquired_by.remove(&session_id);
                     if lock.ref_cnt == 0 {
-                        println!("\tsetting lock to free from shared");
+                        // println!("\tsetting lock to free from shared");
                         lock.mode = constants::LockMode::FREE;
                     }
                     let serialized_lock = serde_json::to_string(lock).unwrap();
@@ -634,7 +638,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     let value_utf8 = client.get("key".to_owned()).await?;
     if let Some(value_utf8) = value_utf8 {
         let value_str = String::from_utf8(value_utf8).expect("Found invalid UTF-8");
-        println!("value: {}", value_str);
+        // println!("value: {}", value_str);
     }
 
     let addr = "127.0.0.1:50051".parse().unwrap();
@@ -646,7 +650,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         locks: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         fence_token_counter: ConsistentCounter::new(0),
     };
-    println!("Server listening on {}", addr);
+    // println!("Server listening on {}", addr);
     Server::builder()
         .add_service(rpc::chubby_server::ChubbyServer::new(server))
         .serve(addr)

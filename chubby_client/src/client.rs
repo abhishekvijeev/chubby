@@ -67,9 +67,9 @@ async fn send_keep_alive(
 }
 
 async fn start_jeopardy(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClientSession>>>) {
-    println!("starting jeopardy");
+    // // println!("starting jeopardy");
     let mut sess = session_arc.lock().await;
-    println!("acquired lock");
+    // // println!("acquired lock");
     let session_option = &mut (*sess);
     if let Some(session) = session_option {
         session.in_jeopardy = true;
@@ -85,7 +85,7 @@ async fn start_jeopardy(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClientS
         let timeout = create_timeout(constants::JEOPARDY_DURATION);
         tokio::select! {
             _ = timeout => {
-                println!("jeopardy period has expired - terminating session");
+                // // println!("jeopardy period has expired - terminating session");
                 shutdown_sender.send(1);
                 let mut sess = session_arc.lock().await;
                 let session_option = &mut (*sess);
@@ -98,13 +98,13 @@ async fn start_jeopardy(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClientS
                     if let Ok(response) = keep_alive_result {
                         let response = response.into_inner();
                         if response.expired {
-                            println!("session has expired!");
+                            // // println!("session has expired!");
                             *session_option = None;
                         }
                         else {
                             // TODO: Fix different lease length semantics
                             // at client and server
-                            println!("session has been revived with lease length {}s!", response.lease_length);
+                            // println!("session has been revived with lease length {}s!", response.lease_length);
                             let lease_length = response.lease_length;
                             session.lease_length = Duration::from_secs(lease_length);
                             session.in_jeopardy = false;
@@ -115,7 +115,7 @@ async fn start_jeopardy(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClientS
             }
         }
     } else {
-        println!("session is None");
+        // println!("session is None");
     }
 }
 
@@ -129,26 +129,26 @@ async fn try_end_jeopardy(
     let server_list = vec!["http://127.0.0.1:50051"];
     loop {
         if shutdown_receiver.try_recv().is_ok() {
-            println!("received shutdown signal, terminating try_end_jeopardy() thread");
+            // println!("received shutdown signal, terminating try_end_jeopardy() thread");
             return;
         }
         for &server_addr in server_list.iter() {
-            println!("try_end_jeopardy(): contacting server {}", server_addr);
+            // println!("try_end_jeopardy(): contacting server {}", server_addr);
             // try to contact server 'i'
             // if successful, jeopardy is over, session has been saved
             let mut conn_status = rpc::chubby_client::ChubbyClient::connect(server_addr).await;
             if let Ok(conn) = &mut conn_status {
-                println!(
-                    "successfully established connection with server {}, sending KeepAlive",
-                    server_addr
-                );
+                // println!(
+                //     "successfully established connection with server {}, sending KeepAlive",
+                //     server_addr
+                // );
                 let result = conn
                     .keep_alive(rpc::KeepAliveRequest {
                         session_id: session_id.clone(),
                     })
                     .await;
                 if let Ok(resp) = result {
-                    println!("received KeepAlive response from server {}", server_addr);
+                    // println!("received KeepAlive response from server {}", server_addr);
                     keep_alive_sender.send(resp);
                     return;
                 }
@@ -176,14 +176,14 @@ async fn monitor_session(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClient
             // at client and server
             let timeout = create_timeout(lease_length);
 
-            println!("spawning thread to send KeepAlive");
+            // println!("spawning thread to send KeepAlive");
             tokio::spawn(async move {
                 send_keep_alive(session_id.clone(), keep_alive_sender).await;
             });
-            println!("spawned thread to send KeepAlive");
+            // println!("spawned thread to send KeepAlive");
             tokio::select! {
                 _ = timeout => {
-                    println!("session lease expired, jeopardy begins");
+                    // println!("session lease expired, jeopardy begins");
                     // After start_jeopardy() returns, one of two things happens:
                     // 1) The session is saved and then next iteration of this loop would
                     // proceed as normal
@@ -192,7 +192,7 @@ async fn monitor_session(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClient
                     start_jeopardy(session_arc.clone()).await;
                 }
                 keep_alive_result = keep_alive_receiver => {
-                    println!("received KeepAlive result {:?}", keep_alive_result);
+                    // println!("received KeepAlive result {:?}", keep_alive_result);
                     let mut sess = session_arc.lock().await;
                     let session_option = &mut (*sess);
 
@@ -200,13 +200,13 @@ async fn monitor_session(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClient
                         if let Ok(response) = keep_alive_result {
                             let response = response.into_inner();
                             if response.expired {
-                                println!("session has expired!");
+                                // println!("session has expired!");
                                 *session_option = None;
                             }
                             else {
                                 // TODO: Fix different lease length semantics
                                 // at client and server
-                                println!("session's lease has been renewed to {}s!", response.lease_length);
+                                // println!("session's lease has been renewed to {}s!", response.lease_length);
                                 let lease_length = response.lease_length;
                                 session.lease_length = Duration::from_secs(lease_length);
                             }
@@ -219,7 +219,7 @@ async fn monitor_session(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClient
                 }
             }
         } else {
-            // println!("\tfinishing task for session ID {}", session_id_clone);
+            // // println!("\tfinishing task for session ID {}", session_id_clone);
             return;
         }
     }
@@ -227,7 +227,7 @@ async fn monitor_session(session_arc: Arc<tokio::sync::Mutex<Option<ChubbyClient
 
 impl ChubbyClient {
     pub async fn new() -> Result<ChubbyClient, tonic::transport::Error> {
-        println!("ChubbyClient::new()");
+        // println!("ChubbyClient::new()");
         return Ok(Self {
             session: Arc::new(tokio::sync::Mutex::new(None)),
         });
@@ -237,7 +237,7 @@ impl ChubbyClient {
         &mut self,
         keep_alive: bool,
     ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
-        println!("ChubbyClient::create_session()");
+        // println!("ChubbyClient::create_session()");
         // TODO: Check if connection is valid, else re-establish
         if let Some(session) = &*self.session.lock().await {
             return Err(Box::new(ChubbyClientError::SessionInProgress(
@@ -250,7 +250,7 @@ impl ChubbyClient {
         let resp = conn.create_session(rpc::CreateSessionRequest {}).await?;
         let session_id = &resp.get_ref().session_id;
         let lease_length = resp.get_ref().lease_length;
-        println!("\treceived session id: {}", session_id);
+        // println!("\treceived session id: {}", session_id);
         let session = ChubbyClientSession {
             session_id: session_id.clone(),
             lease_length: Duration::from_secs(lease_length),
@@ -264,7 +264,7 @@ impl ChubbyClient {
 
         if keep_alive {
             tokio::task::spawn(async move {
-                println!("\tspawning task to monitor session ID {}", session_id_clone);
+                // println!("\tspawning task to monitor session ID {}", session_id_clone);
                 monitor_session(shared_session).await;
             });
         }
@@ -273,12 +273,12 @@ impl ChubbyClient {
     }
 
     pub async fn delete_session(&mut self) -> Result<(), Box<(dyn Error + Send + Sync)>> {
-        println!("ChubbyClient::delete_session()");
+        // println!("ChubbyClient::delete_session()");
         // TODO: Check if connection is valid, else re-establish
-        println!("\tacquiring lock");
+        // println!("\tacquiring lock");
         let mut sess = self.session.lock().await;
         let session_option = &mut (*sess);
-        println!("\tacquired lock");
+        // println!("\tacquired lock");
 
         if let Some(session) = session_option {
             let session_id = session.session_id.clone();
@@ -291,26 +291,26 @@ impl ChubbyClient {
                 .await?;
             let success = resp.into_inner().success;
             if success {
-                println!("\tsetting session ID {} to None", session_id);
+                // println!("\tsetting session ID {} to None", session_id);
                 let mut sess = self.session.lock().await;
                 let session_opti = &mut (*sess);
                 *session_opti = None;
             }
             // thread::sleep(time::Duration::from_millis(100));
         } else {
-            println!("\tsession doesn't exist");
+            // println!("\tsession doesn't exist");
             return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
         }
         return Ok(());
     }
 
     pub async fn open(&mut self, path: String) -> Result<(), Box<(dyn Error + Send + Sync)>> {
-        println!("ChubbyClient::open()");
+        // println!("ChubbyClient::open()");
         // TODO: Check if connection is valid, else re-establish
-        println!("\tacquiring lock");
+        // println!("\tacquiring lock");
         let mut sess = self.session.lock().await;
         let session_option = &mut (*sess);
-        println!("\tacquired lock");
+        // println!("\tacquired lock");
 
         if let Some(session) = session_option {
             let session_id = session.session_id.clone();
@@ -323,7 +323,7 @@ impl ChubbyClient {
                 })
                 .await?;
         } else {
-            println!("\tsession doesn't exist");
+            // println!("\tsession doesn't exist");
             return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
         }
         return Ok(());
@@ -334,12 +334,12 @@ impl ChubbyClient {
         path: String,
         mode: LockMode,
     ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
-        println!("ChubbyClient::acquire()");
+        // println!("ChubbyClient::acquire()");
         // TODO: Check if connection is valid, else re-establish
-        println!("\tacquiring lock");
+        // println!("\tacquiring lock");
         let mut sess = self.session.lock().await;
         let session_option = &mut (*sess);
-        println!("\tacquired lock");
+        // println!("\tacquired lock");
 
         if let Some(session) = session_option {
             let session_id = session.session_id.clone();
@@ -370,27 +370,27 @@ impl ChubbyClient {
                         },
                     );
                 } else {
-                    println!("\tunable to acquire lock");
+                    // // println!("\tunable to acquire lock");
                     return Err(Box::new(ChubbyClientError::LockNotAcquired(path)));
                 }
             } else {
-                println!("\tsession doesn't exist");
+                // // println!("\tsession doesn't exist");
                 return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
             }
         } else {
-            println!("\tsession doesn't exist");
+            // // println!("\tsession doesn't exist");
             return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
         }
         return Ok(());
     }
 
     pub async fn release(&mut self, path: String) -> Result<(), Box<(dyn Error + Send + Sync)>> {
-        println!("ChubbyClient::release()");
+        // println!("ChubbyClient::release()");
         // TODO: Check if connection is valid, else re-establish
-        println!("\tacquiring lock");
+        // println!("\tacquiring lock");
         let mut sess = self.session.lock().await;
         let session_option = &mut (*sess);
-        println!("\tacquired lock");
+        // println!("\tacquired lock");
 
         if let Some(session) = session_option {
             let session_id = session.session_id.clone();
@@ -407,22 +407,22 @@ impl ChubbyClient {
             let session_option = &mut (*sess);
             if let Some(session) = session_option {
                 if release_response.expired {
-                    println!("\tsession doesn't exist");
+                    // println!("\tsession doesn't exist");
                     *session_option = None;
                     return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
                 }
                 if release_response.released_lock {
                     session.locks.remove(&path);
                 } else {
-                    println!("\tunable to release lock");
+                    // println!("\tunable to release lock");
                     return Err(Box::new(ChubbyClientError::LockNotReleased(path)));
                 }
             } else {
-                println!("\tsession doesn't exist");
+                // println!("\tsession doesn't exist");
                 return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
             }
         } else {
-            println!("\tsession doesn't exist");
+            // println!("\tsession doesn't exist");
             return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
         }
         return Ok(());
@@ -432,12 +432,12 @@ impl ChubbyClient {
         &mut self,
         path: String,
     ) -> Result<String, Box<(dyn Error + Send + Sync)>> {
-        println!("ChubbyClient::get_contents()");
+        // println!("ChubbyClient::get_contents()");
         // TODO: Check if connection is valid, else re-establish
-        println!("\tacquiring lock");
+        // println!("\tacquiring lock");
         let mut sess = self.session.lock().await;
         let session_option = &mut (*sess);
-        println!("\tacquired lock");
+        // println!("\tacquired lock");
 
         if let Some(session) = session_option {
             let session_id = session.session_id.clone();
@@ -454,18 +454,18 @@ impl ChubbyClient {
             let session_option = &mut (*sess);
             if session_option.is_some() {
                 if get_contents_response.expired {
-                    println!("\tsession doesn't exist");
+                    // println!("\tsession doesn't exist");
                     *session_option = None;
                     return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
                 }
-                println!("\tsuccessfully got contents: {}", get_contents_response.contents);
+                // println!("\tsuccessfully got contents: {}", get_contents_response.contents);
                 return Ok(get_contents_response.contents);
             } else {
-                println!("\tsession doesn't exist");
+                // println!("\tsession doesn't exist");
                 return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
             }
         } else {
-            println!("\tsession doesn't exist");
+            // println!("\tsession doesn't exist");
             return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
         }
     }
@@ -475,12 +475,12 @@ impl ChubbyClient {
         path: String,
         contents: String,
     ) -> Result<(), Box<(dyn Error + Send + Sync)>> {
-        println!("ChubbyClient::set_contents()");
+        // println!("ChubbyClient::set_contents()");
         // TODO: Check if connection is valid, else re-establish
-        println!("\tacquiring lock");
+        // println!("\tacquiring lock");
         let mut sess = self.session.lock().await;
         let session_option = &mut (*sess);
-        println!("\tacquired lock");
+        // println!("\tacquired lock");
 
         if let Some(session) = session_option {
             let session_id = session.session_id.clone();
@@ -498,19 +498,19 @@ impl ChubbyClient {
             let session_option = &mut (*sess);
             if session_option.is_some() {
                 if set_contents_response.expired {
-                    println!("\tsession doesn't exist");
+                    // println!("\tsession doesn't exist");
                     *session_option = None;
                     return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
                 }
             } else {
-                println!("\tsession doesn't exist");
+                // println!("\tsession doesn't exist");
                 return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
             }
         } else {
-            println!("\tsession doesn't exist");
+            // println!("\tsession doesn't exist");
             return Err(Box::new(ChubbyClientError::SessionDoesNotExist));
         }
-        println!("\tsuccessfully set contents");
+        // println!("\tsuccessfully set contents");
         return Ok(());
     }
 }
