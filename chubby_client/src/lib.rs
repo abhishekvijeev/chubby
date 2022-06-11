@@ -69,7 +69,7 @@ mod tests {
         let mut clients = Vec::new();
         let mut lock_paths = Vec::new();
         let mut thread_handles = Vec::new();
-        let num_locks = 1000;
+        let num_locks = 10;
 
         for i in 1..num_locks {
             let mut client = client::ChubbyClient::new().await?;
@@ -81,12 +81,12 @@ mod tests {
         }
 
         let begin = Instant::now();
-        for i in 1..num_locks {
+        for i in 0..(num_locks-1) {
             let shared_client = clients[i].clone();
             let shared_path = lock_paths[i].clone();
-            thread_handles[i] = tokio::spawn(async move {
+            thread_handles.push(tokio::spawn(async move {
                 acquire_lock(shared_client, shared_path).await;
-            });
+            }));
         }
         while thread_handles.len() > 0 {
             let h = thread_handles.remove(0);
